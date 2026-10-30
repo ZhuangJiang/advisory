@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: advisory-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-advisory}
+      POSTGRES_USER: ${DB_USER:-advisory}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-advisory}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-advisory} -d ${DB_NAME:-advisory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: minio/minio
+    container_name: advisory-minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    container_name: advisory-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-advisory}
+      DB_USER: ${DB_USER:-advisory}
+      DB_PASSWORD: ${DB_PASSWORD:-advisory}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-advisory}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-32bytes-min}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-dev-only-32-byte-key-change-me!!}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
+  miniodata:

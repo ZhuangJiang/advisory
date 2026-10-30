@@ -1,0 +1,32 @@
+server:
+  port: 8080
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/advisory}
+    username: ${DB_USER:advisory}
+    password: ${DB_PASSWORD:advisory}
+  jpa:
+    hibernate.ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  servlet.multipart:
+    max-file-size: 50MB
+    max-request-size: 50MB
+management.endpoints.web.exposure.include: health,info,metrics
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-secret-change-me-32bytes-min}
+    access-ttl: PT30M
+    refresh-ttl: P7D
+  encryption-key: ${APP_ENCRYPTION_KEY:dev-only-32-byte-key-change-me!!}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: ${MINIO_BUCKET:advisory}
+  bootstrap-admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:admin}
+  embedding:
+    dimension: 1024
