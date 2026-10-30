@@ -13,8 +13,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
@@ -23,15 +21,15 @@ import java.time.Duration;
  * Base class for integration tests that need the real PostgreSQL (with pgvector/ltree/pg_trgm)
  * and MinIO.
  *
- * <p>Every test class extending this base boots the full application context against throwaway
- * containers. Flyway migrates the database on context startup; the {@code advisory} bucket is
- * created before the test class runs so presigned URLs work. Suppliers registered through
- * {@link DynamicPropertySource} override the {@code DB_*} / {@code MINIO_*} defaults from
- * {@code application.yml}.</p>
+ * <p>The containers are started exactly once per JVM in a static initializer and left running for
+ * the whole test run: the Spring application context (and the datasource URL resolved by
+ * {@link DynamicPropertySource}) is cached across every test class, so tearing the containers down
+ * between classes would leave the cached datasource pointing at a dead port. Testcontainers' Ryuk
+ * reaper removes them when the JVM exits. Flyway migrates the database on context startup; the
+ * {@code advisory} bucket is created before each class so presigned URLs work.</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Testcontainers
 public abstract class IntegrationTestBase {
 
     protected static final String MINIO_ACCESS_KEY = "minioadmin";
@@ -40,14 +38,12 @@ public abstract class IntegrationTestBase {
 
     private static final int MINIO_PORT = 9000;
 
-    @Container
     protected static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>(DockerImageName.parse("pgvector/pgvector:pg16"))
                     .withDatabaseName("advisory")
                     .withUsername("advisory")
                     .withPassword("advisory");
 
-    @Container
     protected static final GenericContainer<?> MINIO =
             new GenericContainer<>(DockerImageName.parse("minio/minio"))
                     .withExposedPorts(MINIO_PORT)
@@ -57,6 +53,11 @@ public abstract class IntegrationTestBase {
                     .waitingFor(Wait.forHttp("/minio/health/live")
                             .forPort(MINIO_PORT)
                             .withStartupTimeout(Duration.ofMinutes(2)));
+
+    static {
+        POSTGRES.start();
+        MINIO.start();
+    }
 
     @Autowired
     protected MockMvc mockMvc;
