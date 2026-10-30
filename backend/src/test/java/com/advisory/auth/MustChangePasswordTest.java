@@ -67,12 +67,12 @@ class MustChangePasswordTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mustChangePassword").value(false));
 
-        // No business endpoint exists yet: the point is that the password-change gate no longer
-        // intercepts, so the request falls through to 404 instead of 403/40301.
+        // The password-change gate no longer intercepts, so the (now real) knowledge-base endpoint
+        // responds 200 instead of 403/40301.
         mockMvc.perform(get("/api/knowledge-bases")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + changed.accessToken()))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value(40400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
 
         // Refresh tokens issued before the change are revoked.
         mockMvc.perform(post("/api/auth/refresh")
@@ -91,7 +91,7 @@ class MustChangePasswordTest extends IntegrationTestBase {
         LoginResult relogin = login(NEW_PASSWORD);
         mockMvc.perform(get("/api/knowledge-bases")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + relogin.accessToken()))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
     }
 
     @Test
