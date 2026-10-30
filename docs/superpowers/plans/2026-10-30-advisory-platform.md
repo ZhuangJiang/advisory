@@ -202,6 +202,8 @@ public abstract class IntegrationTestBase {
         new PostgreSQLContainer<>("pgvector/pgvector:pg16");
     @Container static GenericContainer<?> MINIO =
         new GenericContainer<>("minio/minio").withExposedPorts(9000)
+            .withEnv("MINIO_ROOT_USER", "minioadmin")
+            .withEnv("MINIO_ROOT_PASSWORD", "minioadmin")
             .withCommand("server /data");
     @DynamicPropertySource static void props(DynamicPropertyRegistry r) { /* 映射 url/凭证 */ }
 }
@@ -256,7 +258,7 @@ class AuthFlowTest extends IntegrationTestBase {
 }
 ```
 
-`PermissionMatrixTest`：USER 调 `POST /api/agents` 期望 403；无 token 调 `GET /api/knowledge-bases` 期望 401。
+`PermissionMatrixTest`：USER 调 `POST /api/users` 期望 403；无 token 调 `GET /api/knowledge-bases` 期望 401。
 
 `MustChangePasswordTest`：admin 默认密码登录后访问 `GET /api/knowledge-bases` 期望 403 `PASSWORD_CHANGE_REQUIRED`；调 `change-password` 后重新登录可访问，旧 refresh token 失效。
 
@@ -399,6 +401,7 @@ git add -A && git commit -m "feat: document upload, status machine and recovery"
 **Files:**
 - Create: `backend/src/main/java/com/advisory/knowledge/ingest/ParsedDocument.java`, `ParsedSection.java`, `TextChunk.java`, `ChunkConfig.java`
 - Create: `backend/src/main/java/com/advisory/knowledge/ingest/DocumentParser.java`, `StructureAwareChunker.java`
+- Modify: `backend/pom.xml`（加 `spring-ai-tika-document-reader`）
 - Test: `backend/src/test/java/com/advisory/knowledge/ChunkerTest.java`
 - Create: `backend/src/test/resources/fixtures/guide.md`, `guide.docx`
 
@@ -1043,6 +1046,7 @@ git add -A && git commit -m "feat(web): admin audit and user management"
 **Files:**
 - Create: `backend/Dockerfile`, `frontend/Dockerfile`, `deploy/nginx.conf`, `deploy/init-bucket.sh`
 - Modify: `docker-compose.yml`
+- Modify: `AGENTS.md`（替换占位内容为已验证命令与目录职责）
 - Create: `scripts/smoke.ps1`
 - Create: `docs/acceptance.md`
 
