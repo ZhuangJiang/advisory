@@ -11,7 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -54,6 +56,55 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value(50000))
                 .andExpect(jsonPath("$.message", not(containsString("boom"))))
                 .andExpect(content().string(not(containsString("IllegalStateException"))))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void mapsUnknownPathTo40400() throws Exception {
+        mockMvc.perform(get("/api/_test/missing"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400))
+                .andExpect(jsonPath("$.message").value("Resource not found"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void mapsMalformedJsonTo40000WithoutLeakingBody() throws Exception {
+        mockMvc.perform(post("/api/_test/validate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{not-json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("Malformed request body"))
+                .andExpect(content().string(not(containsString("not-json"))))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void mapsTypeMismatchTo40000WithoutLeakingValue() throws Exception {
+        mockMvc.perform(get("/api/_test/page").param("page", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("Invalid request parameter"))
+                .andExpect(content().string(not(containsString("abc"))))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void mapsRequestParamValidationTo40000() throws Exception {
+        mockMvc.perform(get("/api/_test/required").param("name", ""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("Validation failed"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void mapsUnsupportedMethodTo405With40000() throws Exception {
+        mockMvc.perform(delete("/api/_test/not-found"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message", is("Method not allowed")))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 }
