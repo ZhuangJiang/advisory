@@ -96,8 +96,14 @@ public class KnowledgeBaseService {
         if ("REINDEXING".equals(kb.getReindexStatus())) {
             throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
         }
-        Long references = jdbc.queryForObject(
-                "SELECT count(*) FROM agents WHERE kb_ids @> CAST(? AS jsonb)", Long.class, "[" + id + "]");
+        // kb_ids may store ids as JSON numbers or strings ("5"); compare the text elements as bigints
+        // instead of relying on jsonb containment with a single representation.
+        Long references = jdbc.queryForObject("""
+                SELECT count(*)
+                FROM agents a
+                CROSS JOIN LATERAL jsonb_array_elements_text(a.kb_ids) AS e(elem)
+                WHERE e.elem ~ '^-?[0-9]+$' AND e.elem::bigint = ?
+                """, Long.class, id);
         if (references != null && references > 0) {
             throw new AppException(ErrorCode.KB_IN_USE, "Knowledge base is referenced by an agent");
         }

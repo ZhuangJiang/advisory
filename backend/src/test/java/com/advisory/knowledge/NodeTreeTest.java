@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -84,6 +85,113 @@ class NodeTreeTest extends IntegrationTestBase {
         assertEquals("n" + a.id(), paths.get(a.id()), "A's path must be unchanged");
         assertEquals("n" + b.id(), paths.get(b.id()), "B moves to root");
         assertEquals("n" + b.id() + ".n" + c.id(), paths.get(c.id()), "C follows B");
+    }
+
+    @Test
+    void moveUpdatesParentId() throws Exception {
+        long kbId = createKb();
+        NodeData a = createNode(kbId, null, "A");
+        NodeData b = createNode(kbId, a.id(), "B");
+        NodeData c = createNode(kbId, b.id(), "C");
+        NodeData d = createNode(kbId, null, "D");
+
+        mockMvc.perform(patch("/api/nodes/" + b.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + d.id() + "}"))
+                .andExpect(status().isOk());
+
+        Map<Long, Map<String, Object>> nodes = listNodes(kbId);
+        assertEquals(Long.valueOf(d.id()), parentIdOf(nodes, b.id()), "B's parentId must follow the move");
+        assertEquals(Long.valueOf(b.id()), parentIdOf(nodes, c.id()), "C must stay under B");
+
+        mockMvc.perform(patch("/api/nodes/" + b.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":null}"))
+                .andExpect(status().isOk());
+
+        nodes = listNodes(kbId);
+        assertNull(parentIdOf(nodes, b.id()), "B is a root after moving to root");
+        assertEquals(Long.valueOf(b.id()), parentIdOf(nodes, c.id()), "C must still point at B");
+    }
+
+    @Test
+    void moveEmptiesOldParent() throws Exception {
+        long kbId = createKb();
+        NodeData a = createNode(kbId, null, "A");
+        NodeData b = createNode(kbId, a.id(), "B");
+
+        mockMvc.perform(patch("/api/nodes/" + b.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":null}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/nodes/" + a.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
+    }
+
+    @Test
+    void moveRejectsDuplicateSiblingName() throws Exception {
+        long kbId = createKb();
+        NodeData a = createNode(kbId, null, "A");
+        createNode(kbId, a.id(), "X");
+        NodeData b = createNode(kbId, null, "B");
+        NodeData bChild = createNode(kbId, b.id(), "X");
+
+        mockMvc.perform(patch("/api/nodes/" + bChild.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + a.id() + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40901))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void renameReflectsNewNameInResponse() throws Exception {
+        long kbId = createKb();
+        NodeData node = createNode(kbId, null, "old-name");
+
+        mockMvc.perform(patch("/api/nodes/" + node.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"new-name\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("new-name"))
+                .andExpect(jsonPath("$.data.path").value("n" + node.id()));
+    }
+
+    @Test
+    void moveReflectsNewPathInResponse() throws Exception {
+        long kbId = createKb();
+        NodeData a = createNode(kbId, null, "A");
+        NodeData b = createNode(kbId, null, "B");
+
+        mockMvc.perform(patch("/api/nodes/" + b.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + a.id() + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.parentId").value((int) a.id()))
+                .andExpect(jsonPath("$.data.path").value("n" + a.id() + ".n" + b.id()));
+    }
+
+    @Test
+    void patchWithNonNumericParentIdRejected() throws Exception {
+        long kbId = createKb();
+        NodeData node = createNode(kbId, null, "A");
+
+        mockMvc.perform(patch("/api/nodes/" + node.id())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":\"abc\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
@@ -240,6 +348,12 @@ class NodeTreeTest extends IntegrationTestBase {
     }
 
     private Map<Long, String> listNodePaths(long kbId) throws Exception {
+        Map<Long, String> result = new HashMap<>();
+        listNodes(kbId).forEach((id, node) -> result.put(id, (String) node.get("path")));
+        return result;
+    }
+
+    private Map<Long, Map<String, Object>> listNodes(long kbId) throws Exception {
         String body = mockMvc.perform(get("/api/knowledge-bases/" + kbId + "/nodes")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                 .andExpect(status().isOk())
@@ -247,11 +361,16 @@ class NodeTreeTest extends IntegrationTestBase {
                 .getResponse()
                 .getContentAsString();
         List<Map<String, Object>> nodes = JsonPath.read(body, "$.data");
-        Map<Long, String> result = new HashMap<>();
+        Map<Long, Map<String, Object>> result = new HashMap<>();
         for (Map<String, Object> node : nodes) {
-            result.put(((Number) node.get("id")).longValue(), (String) node.get("path"));
+            result.put(((Number) node.get("id")).longValue(), node);
         }
         return result;
+    }
+
+    private static Long parentIdOf(Map<Long, Map<String, Object>> nodes, long nodeId) {
+        Object parentId = nodes.get(nodeId).get("parentId");
+        return parentId == null ? null : ((Number) parentId).longValue();
     }
 
     private record NodeData(long id, String path) {

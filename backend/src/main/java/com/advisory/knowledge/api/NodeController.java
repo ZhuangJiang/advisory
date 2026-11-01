@@ -1,6 +1,8 @@
 package com.advisory.knowledge.api;
 
 import com.advisory.common.api.ApiResponse;
+import com.advisory.common.error.AppException;
+import com.advisory.common.error.ErrorCode;
 import com.advisory.knowledge.api.dto.CreateNodeRequest;
 import com.advisory.knowledge.api.dto.NodeResponse;
 import com.advisory.knowledge.service.NodeService;
@@ -20,9 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Node-tree endpoints. Reads are open to any authenticated user; writes are ADMIN-only. The
- * {@code PATCH} body distinguishes "parentId present" (including {@code null} = move to root) from
- * "parentId absent" (no move) by inspecting the raw JSON.
+ * Node-tree endpoints. Reads are open to any authenticated user; writes are ADMIN-only.
+ *
+ * <p>The {@code PATCH} body distinguishes "parentId present" (including {@code null} = move to
+ * root) from "parentId absent" (no move) by inspecting the raw JSON, because a DTO cannot tell
+ * "absent" from "null". That also means the two fields are validated by hand: {@code name} must be a
+ * string and {@code parentId} must be {@code null} or an integral number, otherwise the request is
+ * rejected with {@code VALIDATION_FAILED} instead of being coerced to {@code 0} and reported as a
+ * 404.</p>
  */
 @RestController
 public class NodeController {
@@ -50,9 +57,31 @@ public class NodeController {
     @PatchMapping("/api/nodes/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<NodeResponse> patch(@PathVariable Long id, @RequestBody JsonNode body) {
-        String name = body.hasNonNull("name") ? body.get("name").asText() : null;
+        if (!body.isObject()) {
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "Request body must be a JSON object");
+        }
+
+        String name = null;
+        if (body.has("name")) {
+            JsonNode nameNode = body.get("name");
+            if (!nameNode.isTextual()) {
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "name must be a string");
+            }
+            name = nameNode.textValue();
+        }
+
         boolean move = body.has("parentId");
-        Long parentId = (move && !body.get("parentId").isNull()) ? body.get("parentId").asLong() : null;
+        Long parentId = null;
+        if (move) {
+            JsonNode parentNode = body.get("parentId");
+            if (!parentNode.isNull()) {
+                if (!parentNode.isIntegralNumber() || !parentNode.canConvertToLong()) {
+                    throw new AppException(ErrorCode.VALIDATION_FAILED, "parentId must be a number or null");
+                }
+                parentId = parentNode.longValue();
+            }
+        }
+
         return ApiResponse.ok(NodeResponse.from(service.updateNode(id, name, parentId, move)));
     }
 
