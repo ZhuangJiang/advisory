@@ -3,17 +3,23 @@ package com.advisory.knowledge;
 import com.advisory.auth.domain.User;
 import com.advisory.auth.domain.UserRole;
 import com.advisory.auth.repo.UserRepository;
+import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.service.DocumentIngestWorker;
+import com.advisory.knowledge.service.DocumentService;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
+import io.minio.StatObjectArgs;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,9 +31,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -57,14 +72,22 @@ class DocumentUploadTest extends IntegrationTestBase {
     @Autowired
     private DocumentIngestWorker worker;
 
+    @Autowired
+    private DocumentService documentService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     private String adminToken;
     private String userToken;
+    private long adminUserId;
     private final List<Long> createdKbIds = new ArrayList<>();
 
     @BeforeEach
     void createFixtures() throws Exception {
         User admin = createUser(UserRole.ADMIN);
         User user = createUser(UserRole.USER);
+        adminUserId = admin.getId();
         adminToken = login(admin.getUsername());
         userToken = login(user.getUsername());
     }
@@ -88,6 +111,8 @@ class DocumentUploadTest extends IntegrationTestBase {
 
         Presigned presigned = presign(kbId, nodeId, "hello.txt", content.length);
         assertEquals(600, presigned.expiresInSeconds(), "presigned URL TTL must be 10 minutes");
+        assertTrue(presigned.uploadUrl().contains("X-Amz-Expires=600"),
+                "the signed URL itself must carry the 10-minute expiry: " + presigned.uploadUrl());
         assertTrue(presigned.objectKey().startsWith("kb/" + kbId + "/"),
                 "object key must be scoped to the knowledge base: " + presigned.objectKey());
         assertTrue(presigned.objectKey().endsWith("/hello.txt"), "object key keeps the filename");
@@ -167,6 +192,10 @@ class DocumentUploadTest extends IntegrationTestBase {
         putBytes(presigned.uploadUrl(), content);
         long documentId = createDocument(kbId, nodeId, "doomed.txt", presigned.objectKey(), content.length, 201);
         assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT));
+        jdbcTemplate.update("""
+                INSERT INTO chunks (document_id, kb_id, node_id, seq, content)
+                VALUES (?, ?, ?, 0, 'leftover chunk')
+                """, documentId, kbId, nodeId);
 
         mockMvc.perform(delete("/api/documents/" + documentId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
@@ -191,6 +220,17 @@ class DocumentUploadTest extends IntegrationTestBase {
         assertEquals("DELETED", jdbcTemplate.queryForObject(
                 "SELECT status FROM documents WHERE id = ?", String.class, documentId),
                 "row must be soft-deleted, not removed");
+
+        // The cleanup runs on the worker pool: awaitIdle is the bounded wait, not a fixed sleep.
+        assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "delete cleanup must finish");
+        Integer leftoverChunks = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chunks WHERE document_id = ?", Integer.class, documentId);
+        assertEquals(0, leftoverChunks, "soft delete must remove the document's chunks");
+        assertThrows(Exception.class, () -> minioClient().statObject(StatObjectArgs.builder()
+                        .bucket(MINIO_BUCKET)
+                        .object(presigned.objectKey())
+                        .build()),
+                "soft delete must remove the MinIO object");
     }
 
     @Test
@@ -237,6 +277,164 @@ class DocumentUploadTest extends IntegrationTestBase {
                         .content(presignBody(kbId, nodeId, "huge.bin", FIFTY_MB + 1)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000));
+    }
+
+    @Test
+    void objectLargerThanLimitRejectedFromActualSize() throws Exception {
+        long kbId = createKb();
+        long nodeId = createNode(kbId, "inbox");
+        byte[] oversized = new byte[(int) FIFTY_MB + 1];
+
+        // The client lies about the size (10 bytes); only the stored object's real size can prove it.
+        Presigned presigned = presign(kbId, nodeId, "big.bin", 10);
+        putBytes(presigned.uploadUrl(), oversized);
+
+        mockMvc.perform(post("/api/documents")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(kbId, nodeId, "big.bin", presigned.objectKey(), 10)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM documents WHERE object_key = ?", Integer.class, presigned.objectKey()),
+                "an oversized object must not create a document row");
+    }
+
+    @Test
+    void duplicateObjectKeyIsRejectedByTheDatabase() throws Exception {
+        long kbId = createKb();
+        long nodeId = createNode(kbId, "inbox");
+        String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/duplicate.txt";
+
+        insertDocumentRow(kbId, nodeId, "duplicate.txt", objectKey, 3);
+
+        assertThrows(DataIntegrityViolationException.class,
+                () -> insertDocumentRow(kbId, nodeId, "duplicate.txt", objectKey, 3),
+                "V2 must provide a unique index on documents.object_key");
+    }
+
+    /**
+     * Proves the unique-index backstop and the replay fallback together: the main thread holds an
+     * uncommitted row with the key (so the racing create's lookup cannot see it), the racing create
+     * blocks on the unique index, and after the commit it gets 23505 and must return the winner's
+     * row instead of inserting a duplicate.
+     */
+    @Test
+    void concurrentCreateReusesTheWinningRow() throws Exception {
+        long kbId = createKb();
+        long nodeId = createNode(kbId, "inbox");
+        byte[] content = "race".getBytes(StandardCharsets.UTF_8);
+        Presigned presigned = presign(kbId, nodeId, "race.txt", content.length);
+        putBytes(presigned.uploadUrl(), content);
+
+        CreateDocumentRequest request = new CreateDocumentRequest(
+                kbId, nodeId, "race.txt", presigned.objectKey(), (long) content.length, null);
+        AtomicLong heldId = new AtomicLong();
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            TransactionTemplate tx = new TransactionTemplate(transactionManager);
+            Future<DocumentService.Creation> racing = tx.execute(status -> {
+                heldId.set(insertDocumentRow(kbId, nodeId, "race.txt", presigned.objectKey(), content.length));
+                Future<DocumentService.Creation> future =
+                        pool.submit(() -> documentService.create(request, adminUserId));
+                awaitBackendWaitingOnALock();
+                return future;
+            });
+
+            DocumentService.Creation creation = racing.get(30, TimeUnit.SECONDS);
+            assertFalse(creation.created(), "the loser must report a replay, not a fresh insert");
+            assertEquals(heldId.get(), creation.document().id(),
+                    "the loser must return the winner's row");
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM documents WHERE object_key = ?", Integer.class, presigned.objectKey()),
+                "exactly one row may exist for an object_key");
+    }
+
+    /**
+     * Forces the FAILED path without a production test hook: a temporary trigger makes the
+     * {@code PENDING -> PARSING} compare-and-set blow up, the worker catches it and writes FAILED.
+     * Dropping the trigger then lets retry drive the document to READY.
+     */
+    @Test
+    void failedDocumentCanBeRetried() throws Exception {
+        long kbId = createKb();
+        long nodeId = createNode(kbId, "inbox");
+        long documentId = insertDocumentRow(kbId, nodeId, "failing.txt",
+                "kb/" + kbId + "/" + UUID.randomUUID() + "/failing.txt", 3);
+
+        String function = "fail_ingest_" + UUID.randomUUID().toString().replace("-", "");
+        String trigger = "trg_" + function;
+        try {
+            jdbcTemplate.execute("CREATE FUNCTION " + function
+                    + "() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'simulated ingest failure'; END; $$ LANGUAGE plpgsql");
+            jdbcTemplate.execute("CREATE TRIGGER " + trigger
+                    + " BEFORE UPDATE ON documents FOR EACH ROW WHEN (OLD.id = " + documentId
+                    + " AND NEW.status = 'PARSING') EXECUTE FUNCTION " + function + "()");
+
+            worker.enqueue(documentId);
+            assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "failing ingest must finish");
+
+            mockMvc.perform(get("/api/documents/" + documentId)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.status").value("FAILED"))
+                    .andExpect(jsonPath("$.data.errorMsg").isNotEmpty());
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + trigger + " ON documents");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS " + function + "()");
+        }
+
+        mockMvc.perform(post("/api/documents/" + documentId + "/retry")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.errorMsg").doesNotExist());
+
+        assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "retried ingest must finish");
+        assertEquals("READY", jdbcTemplate.queryForObject(
+                "SELECT status FROM documents WHERE id = ?", String.class, documentId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT error_msg FROM documents WHERE id = ?", String.class, documentId),
+                "retry must clear error_msg");
+    }
+
+    private long insertDocumentRow(long kbId, Long nodeId, String filename, String objectKey, long size) {
+        Long id = jdbcTemplate.queryForObject("""
+                INSERT INTO documents (kb_id, node_id, filename, object_key, size, status)
+                VALUES (?, ?, ?, ?, ?, 'PENDING')
+                RETURNING id
+                """, Long.class, kbId, nodeId, filename, objectKey, size);
+        if (id == null) {
+            throw new IllegalStateException("insert did not return an id");
+        }
+        return id;
+    }
+
+    /** Waits until another backend is blocked on a row/index lock, i.e. the racing insert is queued. */
+    private void awaitBackendWaitingOnALock() {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbcTemplate.queryForObject("""
+                    SELECT count(*) FROM pg_stat_activity
+                    WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid()
+                    """, Integer.class);
+            if (waiting != null && waiting > 0) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("interrupted while waiting for the racing insert to block");
+            }
+        }
+        fail("the concurrent create never blocked on the unique index");
     }
 
     private Presigned presign(long kbId, Long nodeId, String filename, long size) throws Exception {

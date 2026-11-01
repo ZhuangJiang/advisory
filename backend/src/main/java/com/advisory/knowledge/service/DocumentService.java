@@ -15,11 +15,14 @@ import com.advisory.knowledge.repo.KbNodeJdbcRepository;
 import com.advisory.knowledge.repo.KnowledgeBaseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
 import java.net.URLConnection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,9 +32,11 @@ import java.util.regex.Pattern;
 /**
  * Document upload registration, reads, retry and soft delete.
  *
- * <p>The upload is three steps: presign, client-side PUT, then create. Create verifies that the
- * object really landed in MinIO (a replay of an already registered {@code objectKey} skips that
- * check and returns the existing row, which makes a retried callback safe). The object key is
+ * <p>The upload is three steps: presign, client-side PUT, then create. Create stats the uploaded
+ * object and checks its real size against the 50 MB limit (a replay of an already registered
+ * {@code objectKey} skips both checks and returns the existing row, which makes a retried callback
+ * safe). {@code ux_documents_object_key} (V2) backstops concurrent callbacks: the loser of the
+ * unique-index race gets 23505 and returns the winner's row. The object key is
  * {@code kb/{kbId}/{uuid}/{sanitized filename}}; the uuid keeps the keys unique even for repeated
  * uploads of the same filename.</p>
  *
@@ -56,6 +61,7 @@ public class DocumentService {
 
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_FILENAME_LENGTH = 512;
+    private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
 
     /** Everything outside this set becomes {@code _}; it keeps keys safe for S3/MinIO and for URLs. */
     private static final Pattern UNSAFE_FILENAME_CHARS = Pattern.compile("[^A-Za-z0-9._-]");
@@ -126,15 +132,16 @@ public class DocumentService {
 
         Document existing = documents.findByObjectKey(objectKey).orElse(null);
         if (existing != null) {
-            if (DocumentStatus.DELETED.name().equals(existing.getStatus())) {
-                throw new AppException(ErrorCode.CONFLICT, "Document was deleted");
-            }
-            return new Creation(DocumentResponse.from(existing), false);
+            return replay(existing);
         }
 
-        if (!storage.stat(objectKey)) {
+        long actualSize = storage.stat(objectKey)
+                .orElseThrow(() -> new AppException(ErrorCode.VALIDATION_FAILED,
+                        "Uploaded object not found; upload the file before creating the document"))
+                .size();
+        if (actualSize > MAX_SIZE_BYTES) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "Uploaded object not found; upload the file before creating the document");
+                    "Uploaded object must not exceed " + MAX_SIZE_BYTES + " bytes");
         }
 
         Document document = new Document(kbId, request.nodeId(), filename, objectKey);
@@ -143,12 +150,36 @@ public class DocumentService {
         document.setMime(guessMime(filename));
         document.setCreatedBy(userId);
         document.setStatus(DocumentStatus.PENDING.name());
-        // saveAndFlush commits in its own transaction before enqueue: the worker runs on another
-        // connection and must see the row.
-        document = documents.saveAndFlush(document);
+        try {
+            // saveAndFlush commits in its own transaction before enqueue: the worker runs on another
+            // connection and must see the row.
+            document = documents.saveAndFlush(document);
+        } catch (DataIntegrityViolationException e) {
+            // The unique index on object_key is the backstop for two concurrent callbacks: the loser
+            // waits for the winner to commit, then gets 23505 and must return the winner's row.
+            if (!isUniqueViolation(e)) {
+                throw e;
+            }
+            Document winner = documents.findByObjectKey(objectKey).orElseThrow(() -> e);
+            log.info("Concurrent create for object_key {} lost the unique-index race; returning document {}",
+                    objectKey, winner.getId());
+            return replay(winner);
+        }
 
         worker.enqueue(document.getId());
         return new Creation(DocumentResponse.from(document), true);
+    }
+
+    /**
+     * Idempotent replay: the object was already registered, so return the existing row without
+     * re-checking MinIO (the object may already have been consumed). A soft-deleted row is a
+     * conflict instead of a silently invisible document.
+     */
+    private static Creation replay(Document existing) {
+        if (DocumentStatus.DELETED.name().equals(existing.getStatus())) {
+            throw new AppException(ErrorCode.CONFLICT, "Document was deleted");
+        }
+        return new Creation(DocumentResponse.from(existing), false);
     }
 
     public DocumentResponse get(Long documentId) {
@@ -190,9 +221,10 @@ public class DocumentService {
 
     /** Re-queues a {@code FAILED} document. Any other status is a conflict. */
     public DocumentResponse retry(Long documentId) {
-        Document document = documents.findById(documentId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Document not found"));
-        if (!DocumentStatus.FAILED.name().equals(document.getStatus())) {
+        // Read through JDBC: a JPA findById could serve a stale entity after the worker's
+        // out-of-band compare-and-set writes.
+        DocumentResponse current = get(documentId);
+        if (!DocumentStatus.FAILED.name().equals(current.status())) {
             throw new AppException(ErrorCode.CONFLICT, "Only FAILED documents can be retried");
         }
         if (!worker.transition(documentId, DocumentStatus.FAILED, DocumentStatus.PENDING, null)) {
@@ -214,9 +246,7 @@ public class DocumentService {
             throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Document not found");
         }
 
-        String objectKey = jdbc.queryForObject(
-                "SELECT object_key FROM documents WHERE id = ?", String.class, documentId);
-        worker.enqueueCleanup(documentId, objectKey);
+        worker.enqueueCleanup(documentId);
         log.info("Soft-deleted document {}; deferred cleanup queued", documentId);
     }
 
@@ -315,6 +345,27 @@ public class DocumentService {
             return guessed;
         }
         return null;
+    }
+
+    /**
+     * Translates only PostgreSQL unique violations (SQLSTATE 23505). FK/CHECK failures are real
+     * server errors and must not be mistaken for an idempotent replay. The pgjdbc driver is
+     * runtime-scoped, so the cause chain is inspected through {@link SQLException#getSQLState()}.
+     */
+    private static boolean isUniqueViolation(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof DuplicateKeyException) {
+                return true;
+            }
+            if (cause instanceof SQLException sqlException
+                    && SQLSTATE_UNIQUE_VIOLATION.equals(sqlException.getSQLState())) {
+                return true;
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return false;
     }
 
     /** Whether {@link #create} inserted a row or returned an existing one (200 vs 201). */

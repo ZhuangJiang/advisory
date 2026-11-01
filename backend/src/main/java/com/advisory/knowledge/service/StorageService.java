@@ -6,6 +6,7 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
+import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * Thin wrapper around the single MinIO bucket.
@@ -26,7 +28,7 @@ import java.time.Duration;
  *
  * <p>SDK failures are rethrown as {@link IllegalStateException}: they are infrastructure problems
  * and surface as {@code INTERNAL_ERROR}, never as client validation errors. {@link #stat(String)} is
- * the one exception: a missing object is a normal answer ({@code false}).</p>
+ * the one exception: a missing object is a normal answer ({@code Optional.empty()}).</p>
  */
 @Service
 public class StorageService {
@@ -99,22 +101,29 @@ public class StorageService {
         }
     }
 
-    /** Returns whether the object exists. A missing bucket also answers {@code false}. */
-    public boolean stat(String objectKey) {
+    /**
+     * Stats the object and returns its stored size. A missing object (or bucket) is a normal answer
+     * ({@code Optional.empty()}); real infrastructure failures are rethrown.
+     */
+    public Optional<ObjectStat> stat(String objectKey) {
         try {
-            minioClient.statObject(StatObjectArgs.builder()
+            StatObjectResponse response = minioClient.statObject(StatObjectArgs.builder()
                     .bucket(bucket)
                     .object(objectKey)
                     .build());
-            return true;
+            return Optional.of(new ObjectStat(response.size()));
         } catch (ErrorResponseException e) {
             String code = e.errorResponse() == null ? null : e.errorResponse().code();
             if ("NoSuchKey".equals(code) || "NoSuchBucket".equals(code)) {
-                return false;
+                return Optional.empty();
             }
             throw new IllegalStateException("Failed to stat object " + objectKey, e);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to stat object " + objectKey, e);
         }
+    }
+
+    /** Stored object metadata the upload flow needs. */
+    public record ObjectStat(long size) {
     }
 }

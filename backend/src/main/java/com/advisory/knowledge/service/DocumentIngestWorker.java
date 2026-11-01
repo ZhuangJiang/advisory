@@ -5,7 +5,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.task.TaskRejectedException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
@@ -14,6 +13,7 @@ import jakarta.annotation.PreDestroy;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -72,17 +72,24 @@ public class DocumentIngestWorker implements ApplicationRunner {
 
     /**
      * Resets rows stuck in {@code PARSING}/{@code CHUNKING}/{@code EMBEDDING} to {@code PENDING} and
-     * queues them. Returns the ids that were re-queued (in id order).
+     * queues them. Returns the ids that were re-queued (in the order PostgreSQL returned them).
+     *
+     * <p>One {@code UPDATE ... RETURNING id} statement instead of select-then-update: with two
+     * statements a worker could legitimately move a document from {@code PENDING} to {@code PARSING}
+     * between them, be reset to {@code PENDING} without appearing in the returned id list, and then
+     * have its compare-and-set fail — stranding the document with no API path out. Calling this
+     * method twice is safe: the second call only sees rows that are still intermediate (the first
+     * call's tasks may already have advanced them, in which case they are reset and re-queued again).</p>
      */
     public List<Long> recoverInterrupted() {
         List<Long> ids = jdbc.queryForList(
-                "SELECT id FROM documents WHERE status IN " + INTERMEDIATE_STATUSES + " ORDER BY id", Long.class);
+                "UPDATE documents SET status = 'PENDING', updated_at = now() "
+                        + "WHERE status IN " + INTERMEDIATE_STATUSES + " RETURNING id",
+                Long.class);
         if (ids.isEmpty()) {
             return List.of();
         }
-        int reset = jdbc.update(
-                "UPDATE documents SET status = 'PENDING', updated_at = now() WHERE status IN " + INTERMEDIATE_STATUSES);
-        log.info("Reset {} interrupted document(s) to PENDING", reset);
+        log.info("Reset {} interrupted document(s) to PENDING", ids.size());
         ids.forEach(this::enqueue);
         return ids;
     }
@@ -95,13 +102,36 @@ public class DocumentIngestWorker implements ApplicationRunner {
         submit(() -> process(documentId), "ingest document " + documentId);
     }
 
-    /** Fire-and-forget removal of the MinIO object and chunks after a soft delete. */
-    public void enqueueCleanup(Long documentId, String objectKey) {
+    /**
+     * Fire-and-forget cleanup after a soft delete: removes the chunks, the raw object and the parsed
+     * object (when Task 6 has filled {@code parsed_key}).
+     *
+     * <p>The status is re-checked when the task actually runs, and the chunk delete repeats that
+     * check inside the statement, so a document that is no longer {@code DELETED} can never lose the
+     * chunks of a live ingest.</p>
+     */
+    public void enqueueCleanup(Long documentId) {
+        if (documentId == null) {
+            return;
+        }
         submit(() -> {
-            jdbc.update("DELETE FROM chunks WHERE document_id = ?", documentId);
-            if (objectKey != null && !objectKey.isBlank()) {
-                storage.remove(objectKey);
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                    "SELECT status, object_key, parsed_key FROM documents WHERE id = ?", documentId);
+            if (rows.isEmpty()) {
+                log.info("Document {} is gone; nothing to clean up", documentId);
+                return;
             }
+            Map<String, Object> row = rows.get(0);
+            if (!DocumentStatus.DELETED.name().equals(row.get("status"))) {
+                log.info("Document {} is {}; skipping storage cleanup", documentId, row.get("status"));
+                return;
+            }
+            jdbc.update("""
+                    DELETE FROM chunks WHERE document_id = ?
+                      AND EXISTS (SELECT 1 FROM documents d WHERE d.id = ? AND d.status = 'DELETED')
+                    """, documentId, documentId);
+            removeQuietly(documentId, (String) row.get("object_key"));
+            removeQuietly(documentId, (String) row.get("parsed_key"));
         }, "clean up document " + documentId);
     }
 
@@ -158,7 +188,16 @@ public class DocumentIngestWorker implements ApplicationRunner {
     }
 
     private void process(long documentId) {
-        DocumentStatus current = statusOf(documentId);
+        DocumentStatus current;
+        try {
+            current = statusOf(documentId);
+        } catch (RuntimeException e) {
+            // A corrupt/unreadable status must not leave the document in limbo; mark it FAILED and
+            // surface the value in error_msg.
+            log.warn("Document {} has an unreadable status", documentId, e);
+            fail(documentId, "Unreadable document status: " + e.getMessage());
+            return;
+        }
         if (current == null) {
             log.debug("Document {} disappeared before ingestion started", documentId);
             return;
@@ -205,8 +244,21 @@ public class DocumentIngestWorker implements ApplicationRunner {
         return statuses.isEmpty() ? null : DocumentStatus.from(statuses.get(0));
     }
 
+    private void removeQuietly(long documentId, String objectKey) {
+        if (objectKey == null || objectKey.isBlank()) {
+            return;
+        }
+        try {
+            storage.remove(objectKey);
+        } catch (RuntimeException e) {
+            // One missing object must not stop the other (raw vs parsed) from being removed.
+            log.warn("Could not remove object {} of document {}: {}", objectKey, documentId, e.toString());
+        }
+    }
+
     private void submit(Runnable task, String description) {
         taskSubmitted();
+        boolean handedOff = false;
         try {
             executor.execute(() -> {
                 try {
@@ -218,9 +270,15 @@ public class DocumentIngestWorker implements ApplicationRunner {
                     taskCompleted();
                 }
             });
-        } catch (TaskRejectedException e) {
-            taskCompleted();
-            log.error("Ingest queue is full; dropping task to {}", description, e);
+            handedOff = true;
+        } catch (RuntimeException e) {
+            log.error("Could not hand off task to {}", description, e);
+        } finally {
+            // Any exception out of execute() (rejection, shutdown, ...) must release the counter,
+            // otherwise every later awaitIdle() would time out.
+            if (!handedOff) {
+                taskCompleted();
+            }
         }
     }
 

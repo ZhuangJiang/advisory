@@ -85,9 +85,11 @@ class IngestRecoveryTest extends IntegrationTestBase {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         List<Long> requeued = tx.execute(status -> {
             List<Long> ids = worker.recoverInterrupted();
-            // The bulk UPDATE in recoverInterrupted still holds the row lock here, so the task it
-            // enqueued cannot move the row any further until this transaction commits.
+            // The bulk UPDATE ... RETURNING still holds the row lock here, so the task it enqueued
+            // cannot move the row any further until this transaction commits.
             assertEquals("PENDING", statusOf(documentId), "interrupted document must be reset to PENDING");
+            assertTrue(worker.recoverInterrupted().isEmpty(),
+                    "a second recovery pass must not reset an already PENDING row");
             return ids;
         });
 
