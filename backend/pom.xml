@@ -23,6 +23,7 @@
         <testcontainers.version>1.20.4</testcontainers.version>
         <minio.version>8.5.17</minio.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <tika.version>2.9.2</tika.version>
     </properties>
 
     <dependencies>
@@ -65,6 +66,18 @@
             <groupId>io.minio</groupId>
             <artifactId>minio</artifactId>
             <version>${minio.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
+        <!-- tika-parsers-standard-package declares tika-core as "provided", so it is not transitive. -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>${tika.version}</version>
         </dependency>
 
         <dependency>
