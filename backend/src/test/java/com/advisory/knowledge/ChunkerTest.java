@@ -230,7 +230,54 @@ class ChunkerTest {
                 .satisfies(e -> assertThat(((AppException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
     }
 
+    @Test
+    void rejectsCorruptDocxContainer() {
+        // Passes the PK signature sniff but has no OOXML content: Tika (POI) must fail.
+        byte[] bytes = new byte[36];
+        bytes[0] = 'P';
+        bytes[1] = 'K';
+        bytes[2] = 3;
+        bytes[3] = 4;
+        byte[] junk = "broken central directory, not a real office package".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(junk, 0, bytes, 4, Math.min(junk.length, bytes.length - 4));
+
+        assertThatThrownBy(() -> parser.parse(new ByteArrayInputStream(bytes), "corrupt.docx"))
+                .isInstanceOf(AppException.class)
+                .satisfies(e -> assertThat(((AppException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+
+    @Test
+    void stripsUtf8BomBeforeFirstHeading() {
+        byte[] payload = concat(new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF},
+                """
+                # 顶层标题
+
+                正文从这里开始，用来产生第一个 chunk。
+
+                ## 子标题
+
+                子标题下面还有一段内容。
+                """.getBytes(StandardCharsets.UTF_8));
+
+        ParsedDocument doc = parser.parse(new ByteArrayInputStream(payload), "bom.md");
+
+        assertThat(doc.sections()).isNotEmpty();
+        assertThat(doc.sections().get(0).heading()).isEqualTo("顶层标题");
+
+        List<TextChunk> chunks = chunker.split(doc, CONFIG);
+        assertThat(chunks).isNotEmpty();
+        assertThat(chunks.get(0).headingPath()).startsWith("顶层标题");
+        assertThat(chunks).allSatisfy(c -> assertThat(c.content().startsWith("\uFEFF")).isFalse());
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private static byte[] concat(byte[] first, byte[] second) {
+        byte[] out = new byte[first.length + second.length];
+        System.arraycopy(first, 0, out, 0, first.length);
+        System.arraycopy(second, 0, out, first.length, second.length);
+        return out;
+    }
 
     private ParsedDocument parseFixture(String name) throws IOException {
         return parser.parse(new ByteArrayInputStream(readFixture(name).getBytes(StandardCharsets.UTF_8)), name);

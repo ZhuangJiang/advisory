@@ -66,6 +66,7 @@ public class TikaDocumentParser implements DocumentParser {
                     ? new String(bytes, StandardCharsets.UTF_8)
                     : extractWithTika(bytes, name);
             markdown = normalize(markdown);
+            markdown = stripLeadingBom(markdown);
             markdown = cap(markdown, MAX_TEXT_CHARS);
             if (markdown.isBlank()) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED, PARSE_ERROR_MESSAGE);
@@ -160,11 +161,21 @@ public class TikaDocumentParser implements DocumentParser {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private static String cap(String text, int maxChars) {
-        if (text.length() <= maxChars) {
+    /** Removes a single UTF-8 BOM so a leading {@code \uFEFF} cannot break ATX heading detection. */
+    static String stripLeadingBom(String text) {
+        return text.startsWith("\uFEFF") ? text.substring(1) : text;
+    }
+
+    static String cap(String text, int maxChars) {
+        if (text.codePointCount(0, text.length()) <= maxChars) {
             return text;
         }
-        int end = text.offsetByCodePoints(0, text.codePointCount(0, maxChars));
+        int end = text.offsetByCodePoints(0, maxChars);
+        if (end > 0 && end < text.length()
+                && Character.isLowSurrogate(text.charAt(end))
+                && Character.isHighSurrogate(text.charAt(end - 1))) {
+            end--;
+        }
         return text.substring(0, end);
     }
 
