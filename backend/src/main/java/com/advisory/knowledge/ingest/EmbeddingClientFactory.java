@@ -39,6 +39,7 @@ public class EmbeddingClientFactory {
     private static final String MODEL_SQL = """
             SELECT m.model_name,
                    m.capability,
+                   m.dimension,
                    m.enabled,
                    p.id            AS provider_id,
                    p.type          AS provider_type,
@@ -51,9 +52,11 @@ public class EmbeddingClientFactory {
             """;
 
     private final JdbcTemplate jdbc;
+    private final int configuredDimension;
 
-    public EmbeddingClientFactory(JdbcTemplate jdbc) {
+    public EmbeddingClientFactory(JdbcTemplate jdbc, int configuredDimension) {
         this.jdbc = jdbc;
+        this.configuredDimension = configuredDimension;
     }
 
     /**
@@ -69,6 +72,7 @@ public class EmbeddingClientFactory {
         List<ModelRow> rows = jdbc.query(MODEL_SQL, (rs, rowNum) -> new ModelRow(
                 rs.getString("model_name"),
                 rs.getString("capability"),
+                (Integer) rs.getObject("dimension"),
                 rs.getBoolean("enabled"),
                 rs.getLong("provider_id"),
                 rs.getString("provider_type"),
@@ -89,6 +93,14 @@ public class EmbeddingClientFactory {
         }
         if (row.modelName() == null || row.modelName().isBlank()) {
             throw new AppException(ErrorCode.VALIDATION_FAILED, "embedding 模型缺少 model_name");
+        }
+        // Cheap early failure before any provider network call: a models row declaring a
+        // different dimension than app.embedding.dimension can only produce unusable vectors.
+        if (row.dimension() != null && row.dimension() != configuredDimension) {
+            throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
+                    "模型向量维度不一致: models.dimension=" + row.dimension()
+                            + ", app.embedding.dimension=" + configuredDimension
+                            + " (model id=" + embeddingModelId + ")");
         }
         String apiKey = resolveApiKey(row.providerId(), row.apiKeyCipher());
         return switch (row.providerType()) {
@@ -156,6 +168,7 @@ public class EmbeddingClientFactory {
 
     private record ModelRow(String modelName,
                             String capability,
+                            Integer dimension,
                             boolean enabled,
                             long providerId,
                             String providerType,

@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -267,7 +268,53 @@ class ReindexTest extends IntegrationTestBase {
         assertEquals("READY", reindexStatusOf(kbId), "the kb must not stay stuck at REINDEXING");
     }
 
+    /**
+     * A crash between the REINDEXING CAS and the background settle must not brick the knowledge
+     * base forever: startup recovery settles the stale status to FAILED (no auto-restart — the
+     * crash cause is unknown), so the admin can re-trigger the reindex.
+     */
+    @Test
+    void reindexStatusIsSettledAfterRestart() {
+        long stuckKbId = createKb(true);
+        long readyKbId = createKb(true);
+        jdbcTemplate.update(
+                "UPDATE knowledge_bases SET reindex_status = 'REINDEXING' WHERE id = ?", stuckKbId);
+
+        List<Long> settled = worker.recoverInterruptedReindexes();
+
+        assertTrue(settled.contains(stuckKbId),
+                "the stale REINDEXING knowledge base must be settled, got " + settled);
+        assertEquals("FAILED", reindexStatusOf(stuckKbId),
+                "a crashed reindex must settle to FAILED so it can be re-triggered");
+        assertEquals("READY", reindexStatusOf(readyKbId), "a READY knowledge base must be untouched");
+        assertEquals(List.of(), worker.recoverInterruptedReindexes(),
+                "recovery must be idempotent: nothing left to settle on the second call");
+    }
+
+    /** PATCH mid-reindex would mutate the config the running rebuild is reading (ruling R6). */
+    @Test
+    void patchDuringReindexRejected() throws Exception {
+        long kbId = createKb(true);
+        String originalName = nameOf(kbId);
+        jdbcTemplate.update(
+                "UPDATE knowledge_bases SET reindex_status = 'REINDEXING' WHERE id = ?", kbId);
+
+        mockMvc.perform(patch("/api/knowledge-bases/" + kbId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"renamed-during-reindex\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40905));
+
+        assertEquals(originalName, nameOf(kbId), "a rejected PATCH must not change the name");
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private String nameOf(long kbId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT name FROM knowledge_bases WHERE id = ?", String.class, kbId);
+    }
 
     private List<float[]> zeroVectors(List<String> texts) {
         List<float[]> vectors = new ArrayList<>(texts.size());

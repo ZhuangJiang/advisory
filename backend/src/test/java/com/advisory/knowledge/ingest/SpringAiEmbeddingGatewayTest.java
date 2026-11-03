@@ -79,7 +79,7 @@ class SpringAiEmbeddingGatewayTest {
     }
 
     private static EmbeddingClientFactory fakeFactoryReturning(CallFunction function) {
-        return new EmbeddingClientFactory(null) {
+        return new EmbeddingClientFactory(null, 1024) {
             @Override
             public EmbeddingClient forEmbedding(long embeddingModelId) {
                 return new EmbeddingClient(new FixedEmbeddingModel(1024, function), null);

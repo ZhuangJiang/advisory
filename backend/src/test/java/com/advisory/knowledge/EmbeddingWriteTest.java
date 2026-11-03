@@ -3,8 +3,11 @@ package com.advisory.knowledge;
 import com.advisory.auth.domain.User;
 import com.advisory.auth.domain.UserRole;
 import com.advisory.auth.repo.UserRepository;
+import com.advisory.common.error.AppException;
+import com.advisory.common.error.ErrorCode;
 import com.advisory.knowledge.domain.DocumentStatus;
 import com.advisory.knowledge.ingest.ChunkWriter;
+import com.advisory.knowledge.ingest.EmbeddingClientFactory;
 import com.advisory.knowledge.ingest.EmbeddingGateway;
 import com.advisory.knowledge.ingest.TextChunk;
 import com.advisory.knowledge.service.DocumentIngestWorker;
@@ -34,10 +37,12 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -74,6 +79,9 @@ class EmbeddingWriteTest extends IntegrationTestBase {
 
     @Autowired
     private StorageService storage;
+
+    @Autowired
+    private EmbeddingClientFactory embeddingClientFactory;
 
     @Value("${app.embedding.dimension}")
     private int dimension;
@@ -219,6 +227,54 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         assertEquals(count, handedOver.size(), "the DB must hold exactly the chunks that were embedded");
         assertTrue(handedOver.stream().anyMatch(chunk -> !chunk.headingPath().isEmpty()),
                 "at least one chunk must carry a non-empty heading path");
+    }
+
+    /**
+     * The global chunking contract caps overlap at 15%; a config beyond that range is a document
+     * failure ({@code VALIDATION_FAILED} carried in {@code error_msg}) — not an exception escaping
+     * the worker thread and not silently accepted.
+     */
+    @Test
+    void overlapRatioOutOfRangeFailsDocument() throws Exception {
+        long kbId = createKb();
+        long nodeId = createNode(kbId, "inbox");
+        stubSuccessfulEmbedding();
+        String objectKey = uploadObject(kbId, "body that must not be chunked with a bad overlap");
+        long documentId = insertDocumentRow(kbId, nodeId, "bad-overlap.md", objectKey);
+        jdbcTemplate.update("""
+                UPDATE knowledge_bases
+                SET chunk_config = '{"minChars": 50, "maxChars": 120, "overlapRatio": 0.4}'::jsonb
+                WHERE id = ?
+                """, kbId);
+
+        worker.enqueue(documentId);
+        assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "failed ingest must finish");
+
+        assertEquals("FAILED", statusOf(documentId),
+                "an out-of-range overlapRatio must fail the document, not escape the thread");
+        String errorMsg = jdbcTemplate.queryForObject(
+                "SELECT error_msg FROM documents WHERE id = ?", String.class, documentId);
+        assertNotNull(errorMsg, "the failure must carry an error message");
+        assertTrue(errorMsg.contains("0.10") && errorMsg.contains("0.15"),
+                "error must name the allowed range [0.10, 0.15], got: " + errorMsg);
+        verify(embeddingGateway, never()).embed(anyLong(), anyList());
+    }
+
+    /**
+     * A {@code models} row whose declared dimension disagrees with {@code app.embedding.dimension}
+     * must be rejected before any provider network call is made.
+     */
+    @Test
+    void modelDimensionCrossCheckRejectsBeforeProviderCall() {
+        long modelId = embeddingFixture.modelId();
+        jdbcTemplate.update("UPDATE models SET dimension = 512 WHERE id = ?", modelId);
+
+        AppException exception = assertThrows(AppException.class,
+                () -> embeddingClientFactory.forEmbedding(modelId));
+
+        assertEquals(ErrorCode.EMBEDDING_DIMENSION_MISMATCH, exception.getCode());
+        assertTrue(exception.getMessage().contains("dimension"),
+                "message must mention the dimension, got: " + exception.getMessage());
     }
 
     @Test

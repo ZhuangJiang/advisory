@@ -90,6 +90,11 @@ public class KnowledgeBaseService {
     @Transactional
     public KnowledgeBaseResponse update(Long id, UpdateKnowledgeBaseRequest body) {
         KnowledgeBase kb = find(id);
+        // Same guard as delete: mutating embedding_model_id or chunk_config mid-reindex would
+        // change the config the running rebuild is reading, leaving chunks from two configs.
+        if ("REINDEXING".equals(kb.getReindexStatus())) {
+            throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
+        }
         if (body.name() != null) {
             kb.setName(validateName(body.name(), MAX_NAME_LENGTH));
         }

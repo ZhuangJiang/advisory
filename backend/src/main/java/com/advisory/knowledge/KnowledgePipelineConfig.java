@@ -36,8 +36,9 @@ public class KnowledgePipelineConfig {
 
     /** Programmatic Spring AI client construction site (no starter auto-configuration, ruling R1). */
     @Bean
-    public EmbeddingClientFactory embeddingClientFactory(JdbcTemplate jdbc) {
-        return new EmbeddingClientFactory(jdbc);
+    public EmbeddingClientFactory embeddingClientFactory(JdbcTemplate jdbc,
+                                                        @Value("${app.embedding.dimension}") int dimension) {
+        return new EmbeddingClientFactory(jdbc, dimension);
     }
 
     @Bean

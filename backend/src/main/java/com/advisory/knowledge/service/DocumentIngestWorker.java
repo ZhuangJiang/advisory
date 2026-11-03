@@ -110,6 +110,10 @@ public class DocumentIngestWorker implements ApplicationRunner {
         if (requeued > 0) {
             log.info("Re-queued {} document(s) left in an intermediate state by the previous run", requeued);
         }
+        List<Long> settled = recoverInterruptedReindexes();
+        if (!settled.isEmpty()) {
+            log.info("Settled knowledge base(s) left REINDEXING by the previous run: {}", settled);
+        }
     }
 
     /**
@@ -133,6 +137,31 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
         log.info("Reset {} interrupted document(s) to PENDING", ids.size());
         ids.forEach(this::enqueue);
+        return ids;
+    }
+
+    /**
+     * Settles knowledge bases a previous process left at {@code REINDEXING}: the crash happened
+     * between the status CAS and the background settle, so nothing will ever settle them and every
+     * mutating API call would 409 forever. One {@code UPDATE ... RETURNING id} statement (same
+     * reasoning as {@link #recoverInterrupted()}): the rows go to {@code FAILED} — the design's
+     * rule is "失败置 FAILED", an admin re-triggers the rebuild — and the ids are logged. The
+     * reindex is deliberately <em>not</em> restarted: the crash cause is unknown and an automatic
+     * loop would hide it. Idempotent — a second call finds no {@code REINDEXING} row and returns
+     * an empty list.
+     *
+     * <p>Invoked from {@link #run(ApplicationArguments)} in the same startup phase as
+     * {@link #recoverInterrupted()}.</p>
+     */
+    public List<Long> recoverInterruptedReindexes() {
+        List<Long> ids = jdbc.queryForList(
+                "UPDATE knowledge_bases SET reindex_status = 'FAILED' "
+                        + "WHERE reindex_status = 'REINDEXING' RETURNING id",
+                Long.class);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        log.info("Settled {} knowledge base(s) stuck in REINDEXING to FAILED: {}", ids.size(), ids);
         return ids;
     }
 
@@ -364,11 +393,14 @@ public class DocumentIngestWorker implements ApplicationRunner {
                 (String) row.get("object_key"));
     }
 
-    /** Sibling key of the raw object: same directory + {@code /parsed.md} (ruling R4). */
+    /**
+     * Sibling key of the raw object: same directory + {@code /parsed.md} (ruling R4). A root-level
+     * object key (no slash) yields the root-level {@code parsed.md}, never {@code doc.md/parsed.md}.
+     */
     static String parsedKeyFor(String objectKey) {
         int slash = objectKey.lastIndexOf('/');
         if (slash < 0) {
-            return objectKey + "/parsed.md";
+            return "parsed.md";
         }
         return objectKey.substring(0, slash + 1) + "parsed.md";
     }
@@ -394,10 +426,11 @@ public class DocumentIngestWorker implements ApplicationRunner {
         int minChars = node.path("minChars").asInt(ChunkConfig.DEFAULT.minChars());
         int maxChars = node.path("maxChars").asInt(ChunkConfig.DEFAULT.maxChars());
         double overlapRatio = node.path("overlapRatio").asDouble(ChunkConfig.DEFAULT.overlapRatio());
-        if (minChars < 1 || maxChars < minChars || overlapRatio < 0 || overlapRatio >= 0.5) {
+        if (minChars < 1 || maxChars < minChars || overlapRatio < 0.10 || overlapRatio > 0.15) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
                     "无效的 chunk 配置：minChars=" + minChars + ", maxChars=" + maxChars
-                            + ", overlapRatio=" + overlapRatio + "（要求 minChars>=1, maxChars>=minChars, 0<=overlapRatio<0.5）");
+                            + ", overlapRatio=" + overlapRatio
+                            + "（要求 minChars>=1, maxChars>=minChars, overlapRatio 在 [0.10, 0.15] 闭区间内）");
         }
         return new ChunkConfig(minChars, maxChars, overlapRatio);
     }

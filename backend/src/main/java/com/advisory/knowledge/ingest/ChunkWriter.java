@@ -18,9 +18,10 @@ import java.util.Objects;
  * set or the entire new set, never a mixture.
  *
  * <p>Guards run <em>before</em> the {@code DELETE} (the caller and {@link SpringAiEmbeddingGateway}
- * validate too, but this is where the invariant is provable): chunk count must equal vector count
- * and every vector must carry exactly {@code app.embedding.dimension} dimensions, or nothing at all
- * is written and {@link ErrorCode#EMBEDDING_DIMENSION_MISMATCH} is thrown. {@code seq} comes from
+ * validate too, but this is where the invariant is provable): a chunk/vector count mismatch is an
+ * internal contract violation ({@link ErrorCode#INTERNAL_ERROR}), and every vector must carry
+ * exactly {@code app.embedding.dimension} dimensions or nothing at all is written and
+ * {@link ErrorCode#EMBEDDING_DIMENSION_MISMATCH} is thrown. {@code seq} comes from
  * {@link TextChunk#seq()} and is never renumbered.</p>
  */
 @Component
@@ -80,7 +81,9 @@ public class ChunkWriter {
 
     private void validateBeforeAnyDelete(long documentId, List<TextChunk> chunks, List<float[]> vectors) {
         if (chunks.size() != vectors.size()) {
-            throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
+            // Internal contract violation between worker and writer, not a provider problem:
+            // the gateway guarantees one vector per chunk, so a count mismatch is our bug.
+            throw new AppException(ErrorCode.INTERNAL_ERROR,
                     "Embedding count mismatch: " + chunks.size() + " chunk(s) but "
                             + vectors.size() + " vector(s) for document " + documentId);
         }
