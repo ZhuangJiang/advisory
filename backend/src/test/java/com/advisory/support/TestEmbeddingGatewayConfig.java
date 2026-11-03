@@ -12,8 +12,12 @@ import java.util.List;
 
 /**
  * Deterministic {@link EmbeddingGateway} stub for every {@code @SpringBootTest} context: it returns
- * zero vectors of {@code app.embedding.dimension} length, so no test ever calls out to a real
+ * deterministic non-zero unit vectors derived from each text, so no test ever calls out to a real
  * provider. Tests that need other behavior replace it with {@code @MockitoBean EmbeddingGateway}.
+ *
+ * <p>Vectors are seeded by {@code text.hashCode()} — same text, same vector across calls — and
+ * normalized to unit length so cosine distance against them is never NaN (a zero vector would
+ * be).</p>
  *
  * <p>A plain {@code @Configuration} class in the scanned {@code com.advisory} tree is intentional:
  * the main application's component scan registers it for every test, which is exactly what a shared
@@ -33,7 +37,12 @@ public class TestEmbeddingGatewayConfig {
         return new StubEmbeddingGateway(dimension);
     }
 
-    /** Zero vectors of the configured length; the model id and texts are ignored. */
+    /**
+     * Deterministic non-zero unit vectors of the configured length: each text seeds a
+     * {@link java.util.Random} via {@code text.hashCode()}, so the same text always embeds to the
+     * same vector (and the vector is non-degenerate — a zero vector would make pgvector's cosine
+     * distance NaN on the retrieval path). The model id is ignored.
+     */
     static class StubEmbeddingGateway implements EmbeddingGateway {
 
         private final int dimension;
@@ -49,10 +58,32 @@ public class TestEmbeddingGatewayConfig {
             if (texts == null) {
                 return vectors;
             }
-            for (String ignored : texts) {
-                vectors.add(new float[dimension]);
+            for (String text : texts) {
+                vectors.add(vectorFor(text));
             }
             return vectors;
+        }
+
+        private float[] vectorFor(String text) {
+            java.util.Random random = new java.util.Random(text == null ? 0L : text.hashCode());
+            float[] vector = new float[dimension];
+            double normSq = 0d;
+            for (int i = 0; i < dimension; i++) {
+                float value = random.nextFloat() * 2f - 1f;
+                vector[i] = value;
+                normSq += (double) value * value;
+            }
+            if (normSq == 0d) {
+                // Guard the (practically impossible) all-zero draw: cosine distance on a zero
+                // vector is NaN, so the vector must carry at least one non-zero component.
+                vector[0] = 1f;
+                return vector;
+            }
+            float norm = (float) Math.sqrt(normSq);
+            for (int i = 0; i < dimension; i++) {
+                vector[i] /= norm;
+            }
+            return vector;
         }
     }
 }
