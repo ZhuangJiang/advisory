@@ -257,6 +257,13 @@ public class DocumentService {
         if (!knowledgeBases.existsById(kbId)) {
             throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found");
         }
+        // Ruling R2 (Task 7): uploads are rejected while the knowledge base rebuilds its index.
+        // Retrieval gets the same gate in Task 8.
+        String reindexStatus = jdbc.queryForObject(
+                "SELECT reindex_status FROM knowledge_bases WHERE id = ?", String.class, kbId);
+        if ("REINDEXING".equals(reindexStatus)) {
+            throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引，禁止上传文档");
+        }
         return kbId;
     }
 

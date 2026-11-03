@@ -4,6 +4,8 @@ import com.advisory.auth.domain.User;
 import com.advisory.auth.domain.UserRole;
 import com.advisory.auth.repo.UserRepository;
 import com.advisory.knowledge.service.DocumentIngestWorker;
+import com.advisory.knowledge.service.StorageService;
+import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterEach;
@@ -56,15 +58,20 @@ class IngestRecoveryTest extends IntegrationTestBase {
     private DocumentIngestWorker worker;
 
     @Autowired
+    private StorageService storageService;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private String adminToken;
     private final List<Long> createdKbIds = new ArrayList<>();
+    private EmbeddingModelFixture embeddingFixture;
 
     @BeforeEach
     void createFixtures() throws Exception {
         User admin = createUser();
         adminToken = login(admin.getUsername());
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
     }
 
     @AfterEach
@@ -75,6 +82,11 @@ class IngestRecoveryTest extends IntegrationTestBase {
             jdbcTemplate.update("DELETE FROM knowledge_bases WHERE id = ?", kbId);
         }
         createdKbIds.clear();
+        if (embeddingFixture != null) {
+            // Knowledge bases referencing the model are deleted above (ON DELETE RESTRICT).
+            embeddingFixture.close();
+            embeddingFixture = null;
+        }
     }
 
     @Test
@@ -127,11 +139,15 @@ class IngestRecoveryTest extends IntegrationTestBase {
 
     private long insertDocument(long kbId, String status) {
         String name = "recovery-" + UUID.randomUUID() + ".txt";
+        String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/" + name;
+        // Since Task 7 the pipeline parses the stored object, so a recovered document can only
+        // reach READY when its upload actually exists in MinIO.
+        storageService.putText(objectKey, "recovery payload for " + name);
         Long id = jdbcTemplate.queryForObject("""
                 INSERT INTO documents (kb_id, filename, object_key, size, status)
                 VALUES (?, ?, ?, 0, ?)
                 RETURNING id
-                """, Long.class, kbId, name, "kb/" + kbId + "/" + UUID.randomUUID() + "/" + name, status);
+                """, Long.class, kbId, name, objectKey, status);
         if (id == null) {
             throw new IllegalStateException("insert did not return an id");
         }
@@ -171,6 +187,9 @@ class IngestRecoveryTest extends IntegrationTestBase {
                 .getResponse()
                 .getContentAsString();
         long id = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+        // Since Task 7 the ingest pipeline really embeds, so a KB whose documents must reach READY
+        // needs an embedding model.
+        embeddingFixture.wire(id);
         createdKbIds.add(id);
         return id;
     }

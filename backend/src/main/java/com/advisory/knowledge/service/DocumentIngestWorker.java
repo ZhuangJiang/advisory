@@ -1,6 +1,17 @@
 package com.advisory.knowledge.service;
 
+import com.advisory.common.error.AppException;
+import com.advisory.common.error.ErrorCode;
 import com.advisory.knowledge.domain.DocumentStatus;
+import com.advisory.knowledge.ingest.ChunkConfig;
+import com.advisory.knowledge.ingest.DocumentParser;
+import com.advisory.knowledge.ingest.EmbeddingGateway;
+import com.advisory.knowledge.ingest.ParsedDocument;
+import com.advisory.knowledge.ingest.StructureAwareChunker;
+import com.advisory.knowledge.ingest.TextChunk;
+import com.advisory.knowledge.ingest.ChunkWriter;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -11,6 +22,7 @@ import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PreDestroy;
 
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -22,18 +34,25 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>All status writes are compare-and-set: {@code UPDATE documents SET status = ? WHERE id = ? AND
  * status = ?}. Zero affected rows means another actor already moved the document, so the task logs
- * and abandons the work instead of overwriting a newer state. The pipeline is deliberately a stub in
- * this task — it walks {@code PENDING -> PARSING -> CHUNKING -> EMBEDDING -> READY} without parsing,
- * chunking or embedding, so a document is {@code READY} with zero chunks.</p>
+ * and abandons the work instead of overwriting a newer state. The pipeline walks
+ * {@code PENDING -> PARSING -> CHUNKING -> EMBEDDING -> READY}: parse (store {@code parsed_key} on
+ * MinIO), structure-aware chunking with the knowledge base's {@code chunk_config}, embedding of
+ * every chunk and an idempotent chunk {@code replaceAll}. A document with an empty chunk list
+ * becomes {@code READY} with zero chunks; every other failure becomes {@code FAILED} with a
+ * truncated {@code error_msg}.</p>
  *
  * <p>Restart recovery is a startup {@link ApplicationRunner}: the backend is single-replica, so any
  * row left in an intermediate status belongs to a dead process. Rows are reset to {@code PENDING}
- * and re-queued; terminal rows are left alone.</p>
+ * and re-queued; terminal rows are left alone. A resumed document is moved back behind the
+ * {@code PARSING} CAS: every stage is idempotent (the parsed object is overwritten, the chunk set
+ * is {@code replaceAll}ed), so replaying from the front is always safe.</p>
  *
  * <p>{@link #awaitIdle(Duration)} tracks submitted tasks with a counter guarded by a condition
  * variable, so tests wait for real completion instead of sleeping. Every path that increments the
  * counter decrements it in a {@code finally} block, including rejected submissions, so the counter
- * cannot leak.</p>
+ * cannot leak. The same counter tracks knowledge-base reindex tasks on the dedicated single-thread
+ * executor ({@link #submitReindexTask(Runnable)}), so a reindex can be awaited exactly like a
+ * normal ingest.</p>
  */
 @Component
 public class DocumentIngestWorker implements ApplicationRunner {
@@ -45,20 +64,43 @@ public class DocumentIngestWorker implements ApplicationRunner {
 
     private final JdbcTemplate jdbc;
     private final StorageService storage;
+    private final DocumentParser parser;
+    private final StructureAwareChunker chunker;
+    private final ChunkWriter chunkWriter;
+    private final EmbeddingGateway gateway;
+    private final ObjectMapper objectMapper;
     private final ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    private final ThreadPoolTaskExecutor reindexExecutor = new ThreadPoolTaskExecutor();
 
     private final ReentrantLock idleLock = new ReentrantLock();
     private final Condition idleCondition = idleLock.newCondition();
     private int pendingTasks;
 
-    public DocumentIngestWorker(JdbcTemplate jdbc, StorageService storage) {
+    public DocumentIngestWorker(JdbcTemplate jdbc,
+                                StorageService storage,
+                                DocumentParser parser,
+                                StructureAwareChunker chunker,
+                                ChunkWriter chunkWriter,
+                                EmbeddingGateway gateway,
+                                ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.storage = storage;
+        this.parser = parser;
+        this.chunker = chunker;
+        this.chunkWriter = chunkWriter;
+        this.gateway = gateway;
+        this.objectMapper = objectMapper;
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("doc-ingest-");
         executor.initialize();
+        // Reindex serializes whole knowledge-base rebuilds; queue is per design (ruling R6).
+        reindexExecutor.setCorePoolSize(1);
+        reindexExecutor.setMaxPoolSize(1);
+        reindexExecutor.setQueueCapacity(100);
+        reindexExecutor.setThreadNamePrefix("kb-reindex-");
+        reindexExecutor.initialize();
     }
 
     /** Startup hook: re-queue documents that a previous process left mid-pipeline. */
@@ -99,7 +141,7 @@ public class DocumentIngestWorker implements ApplicationRunner {
         if (documentId == null) {
             return;
         }
-        submit(() -> process(documentId), "ingest document " + documentId);
+        submit(() -> runPipeline(documentId), "ingest document " + documentId);
     }
 
     /**
@@ -133,6 +175,39 @@ public class DocumentIngestWorker implements ApplicationRunner {
             removeQuietly(documentId, (String) row.get("object_key"));
             removeQuietly(documentId, (String) row.get("parsed_key"));
         }, "clean up document " + documentId);
+    }
+
+    /**
+     * Submits a knowledge-base reindex on the dedicated single-thread executor, tracked by the same
+     * {@link #awaitIdle(Duration)} counter so tests wait for real completion. The runnable is fully
+     * responsible for settling the knowledge base status in its own {@code finally}.
+     *
+     * @return {@code true} once handed off to the executor; {@code false} when the executor rejected
+     * the task (the caller must then restore the knowledge base status, ruling R6)
+     */
+    public boolean submitReindexTask(Runnable task) {
+        taskSubmitted();
+        boolean handedOff = false;
+        try {
+            reindexExecutor.execute(() -> {
+                try {
+                    task.run();
+                } catch (Throwable t) {
+                    // The runnable settles the KB status itself; this is the last line of defense.
+                    log.error("Reindex task failed unexpectedly", t);
+                } finally {
+                    taskCompleted();
+                }
+            });
+            handedOff = true;
+        } catch (RuntimeException e) {
+            log.error("Could not hand off reindex task to the reindex executor", e);
+        } finally {
+            if (!handedOff) {
+                taskCompleted();
+            }
+        }
+        return handedOff;
     }
 
     /**
@@ -187,7 +262,14 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
     }
 
-    private void process(long documentId) {
+    /**
+     * Runs the pipeline synchronously for one document, whatever non-terminal status it currently
+     * has: {@code PENDING} (normal path) or an intermediate status from start-up recovery or a
+     * mid-reindex restart, which is moved back behind the {@code PARSING} CAS and replayed from the
+     * front (every stage is idempotent). Package-private so {@code KnowledgeBaseService.reindex} can
+     * drive the exact same pipeline synchronously on the reindex thread (ruling R6).
+     */
+    void runPipeline(long documentId) {
         DocumentStatus current;
         try {
             current = statusOf(documentId);
@@ -208,34 +290,116 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
 
         try {
-            DocumentStatus from = current;
-            if (from == DocumentStatus.PENDING) {
-                if (!transition(documentId, DocumentStatus.PENDING, DocumentStatus.PARSING, null)) {
-                    return;
-                }
-                from = DocumentStatus.PARSING;
+            // PENDING is the normal path; an intermediate status comes from start-up recovery or a
+            // re-run: send it back through parsing since every stage is idempotent.
+            if (!transition(documentId, current, DocumentStatus.PARSING, null)) {
+                return;
             }
-            if (from == DocumentStatus.PARSING) {
-                // Task 6 replaces this step with real parsing.
-                if (!transition(documentId, DocumentStatus.PARSING, DocumentStatus.CHUNKING, null)) {
-                    return;
-                }
-                from = DocumentStatus.CHUNKING;
+
+            // ------------------------------------------------ PARSING
+            IngestRow row = loadIngestRow(documentId);
+            if (storage.stat(row.objectKey()).isEmpty()) {
+                throw new AppException(ErrorCode.VALIDATION_FAILED,
+                        "无法解析该文件：存储中找不到已上传的文件对象 " + row.objectKey());
             }
-            if (from == DocumentStatus.CHUNKING) {
-                // Task 7 replaces this step with real chunking + embedding.
-                if (!transition(documentId, DocumentStatus.CHUNKING, DocumentStatus.EMBEDDING, null)) {
-                    return;
-                }
-                from = DocumentStatus.EMBEDDING;
+            ParsedDocument parsed;
+            try (InputStream in = storage.getObject(row.objectKey())) {
+                parsed = parser.parse(in, row.filename());
             }
-            if (from == DocumentStatus.EMBEDDING) {
-                transition(documentId, DocumentStatus.EMBEDDING, DocumentStatus.READY, null);
+            // parsed_key is overwritten on every run: it is the recovery/debug artifact (§145/§154).
+            String parsedKey = parsedKeyFor(row.objectKey());
+            String markdown = parsed.markdown();
+            storage.putText(parsedKey, markdown);
+            jdbc.update("UPDATE documents SET parsed_key = ? WHERE id = ?", parsedKey, documentId);
+            if (!transition(documentId, DocumentStatus.PARSING, DocumentStatus.CHUNKING, null)) {
+                return;
             }
+
+            // ------------------------------------------------ CHUNKING
+            ChunkConfig chunkConfig = readChunkConfig(row.kbId());
+            List<TextChunk> chunks = chunker.split(parsed, chunkConfig);
+            if (!transition(documentId, DocumentStatus.CHUNKING, DocumentStatus.EMBEDDING, null)) {
+                return;
+            }
+
+            // ------------------------------------------------ EMBEDDING
+            Long embeddingModelId = jdbc.queryForObject(
+                    "SELECT embedding_model_id FROM knowledge_bases WHERE id = ?",
+                    Long.class, row.kbId());
+            if (embeddingModelId == null) {
+                throw new AppException(ErrorCode.VALIDATION_FAILED,
+                        "知识库未配置 embedding 模型，无法向量化文档");
+            }
+            List<String> contents = new java.util.ArrayList<>(chunks.size());
+            for (TextChunk chunk : chunks) {
+                contents.add(chunk.content());
+            }
+            // Empty chunk list (whitespace-only document or headings without prose): READY with zero
+            // chunks; replaceAll still deletes any chunks from a previous run.
+            List<float[]> vectors = contents.isEmpty()
+                    ? List.of()
+                    : gateway.embed(embeddingModelId, contents);
+            chunkWriter.replaceAll(documentId, row.kbId(), row.nodeId(), chunks, vectors);
+
+            transition(documentId, DocumentStatus.EMBEDDING, DocumentStatus.READY, null);
         } catch (Exception e) {
             log.warn("Document {} ingestion failed", documentId, e);
             fail(documentId, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
+    }
+
+    private IngestRow loadIngestRow(long documentId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT kb_id, node_id, filename, object_key FROM documents WHERE id = ?
+                """, documentId);
+        if (rows.isEmpty()) {
+            // Raced against a hard delete: act as if the document vanished.
+            throw new IllegalStateException("document row vanished mid-ingest");
+        }
+        Map<String, Object> row = rows.get(0);
+        return new IngestRow(
+                ((Number) row.get("kb_id")).longValue(),
+                row.get("node_id") == null ? null : ((Number) row.get("node_id")).longValue(),
+                (String) row.get("filename"),
+                (String) row.get("object_key"));
+    }
+
+    /** Sibling key of the raw object: same directory + {@code /parsed.md} (ruling R4). */
+    static String parsedKeyFor(String objectKey) {
+        int slash = objectKey.lastIndexOf('/');
+        if (slash < 0) {
+            return objectKey + "/parsed.md";
+        }
+        return objectKey.substring(0, slash + 1) + "parsed.md";
+    }
+
+    /**
+     * Reads and validates {@code knowledge_bases.chunk_config} ({@code minChars}, {@code maxChars},
+     * {@code overlapRatio}); missing keys fall back to {@link ChunkConfig#DEFAULT}; an invalid range
+     * is a document failure ({@code VALIDATION_FAILED}), not an escaping exception (ruling R7).
+     */
+    ChunkConfig readChunkConfig(long kbId) {
+        String json = jdbc.queryForObject(
+                "SELECT chunk_config::text FROM knowledge_bases WHERE id = ?", String.class, kbId);
+        if (json == null || json.isBlank()) {
+            return ChunkConfig.DEFAULT;
+        }
+        JsonNode node;
+        try {
+            node = objectMapper.readTree(json);
+        } catch (Exception e) {
+            throw new AppException(ErrorCode.VALIDATION_FAILED,
+                    "知识库 chunk 配置不是合法 JSON: " + json);
+        }
+        int minChars = node.path("minChars").asInt(ChunkConfig.DEFAULT.minChars());
+        int maxChars = node.path("maxChars").asInt(ChunkConfig.DEFAULT.maxChars());
+        double overlapRatio = node.path("overlapRatio").asDouble(ChunkConfig.DEFAULT.overlapRatio());
+        if (minChars < 1 || maxChars < minChars || overlapRatio < 0 || overlapRatio >= 0.5) {
+            throw new AppException(ErrorCode.VALIDATION_FAILED,
+                    "无效的 chunk 配置：minChars=" + minChars + ", maxChars=" + maxChars
+                            + ", overlapRatio=" + overlapRatio + "（要求 minChars>=1, maxChars>=minChars, 0<=overlapRatio<0.5）");
+        }
+        return new ChunkConfig(minChars, maxChars, overlapRatio);
     }
 
     private DocumentStatus statusOf(long documentId) {
@@ -314,8 +478,12 @@ public class DocumentIngestWorker implements ApplicationRunner {
                 : errorMsg.substring(0, MAX_ERROR_MESSAGE_LENGTH);
     }
 
+    private record IngestRow(long kbId, Long nodeId, String filename, String objectKey) {
+    }
+
     @PreDestroy
     void shutdown() {
+        reindexExecutor.shutdown();
         executor.shutdown();
     }
 }

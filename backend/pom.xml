@@ -24,7 +24,20 @@
         <minio.version>8.5.17</minio.version>
         <jjwt.version>0.12.6</jjwt.version>
         <tika.version>2.9.2</tika.version>
+        <spring-ai.version>1.0.9</spring-ai.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -96,6 +109,19 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>${jjwt.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Spring AI: core modules only, no starters. Clients are built programmatically because
+             one `models` row maps to one provider at runtime (yml-based starter auto-configuration
+             cannot express that); Task 8 runs vector search as explicit SQL, so no vector-store
+             bean is needed. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-ollama</artifactId>
         </dependency>
 
         <dependency>

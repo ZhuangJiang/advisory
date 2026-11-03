@@ -56,6 +56,18 @@ public class KnowledgeBaseController {
         return ApiResponse.ok(service.update(id, body));
     }
 
+    /**
+     * ADMIN-only full reindex. Returns 202 (the rebuild runs in the background) or 409
+     * {@code KB_REINDEXING} when one is already running.
+     */
+    @PostMapping("/{id}/reindex")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<Void> reindex(@PathVariable Long id) {
+        service.reindex(id);
+        return ApiResponse.ok();
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(@PathVariable Long id) {

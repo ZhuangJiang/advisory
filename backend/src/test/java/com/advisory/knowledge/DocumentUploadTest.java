@@ -6,6 +6,8 @@ import com.advisory.auth.repo.UserRepository;
 import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.service.DocumentIngestWorker;
 import com.advisory.knowledge.service.DocumentService;
+import com.advisory.knowledge.service.StorageService;
+import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
 import io.minio.StatObjectArgs;
@@ -51,7 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Document upload flow: presigned PUT that really works against the MinIO test container, idempotent
- * create on {@code objectKey}, KB/node validation, the stub ingest pipeline reaching {@code READY},
+ * create on {@code objectKey}, KB/node validation, the real ingest pipeline reaching {@code READY},
  * soft delete hiding the document from reads, the ADMIN-only write matrix and retry guards.
  */
 class DocumentUploadTest extends IntegrationTestBase {
@@ -76,12 +78,16 @@ class DocumentUploadTest extends IntegrationTestBase {
     private DocumentService documentService;
 
     @Autowired
+    private StorageService storageService;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private String adminToken;
     private String userToken;
     private long adminUserId;
     private final List<Long> createdKbIds = new ArrayList<>();
+    private EmbeddingModelFixture embeddingFixture;
 
     @BeforeEach
     void createFixtures() throws Exception {
@@ -90,6 +96,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         adminUserId = admin.getId();
         adminToken = login(admin.getUsername());
         userToken = login(user.getUsername());
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
     }
 
     @AfterEach
@@ -101,6 +108,11 @@ class DocumentUploadTest extends IntegrationTestBase {
             jdbcTemplate.update("DELETE FROM knowledge_bases WHERE id = ?", kbId);
         }
         createdKbIds.clear();
+        if (embeddingFixture != null) {
+            // Knowledge bases referencing the model are deleted above (ON DELETE RESTRICT).
+            embeddingFixture.close();
+            embeddingFixture = null;
+        }
     }
 
     @Test
@@ -179,7 +191,8 @@ class DocumentUploadTest extends IntegrationTestBase {
 
         Integer chunks = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chunks WHERE document_id = ?", Integer.class, documentId);
-        assertEquals(0, chunks, "Task 5 stubs the pipeline: READY with no chunks");
+        assertTrue(chunks != null && chunks >= 1,
+                "Task 7 makes the pipeline real: the parsed document must be chunked and embedded");
     }
 
     @Test
@@ -365,8 +378,11 @@ class DocumentUploadTest extends IntegrationTestBase {
     void failedDocumentCanBeRetried() throws Exception {
         long kbId = createKb();
         long nodeId = createNode(kbId, "inbox");
-        long documentId = insertDocumentRow(kbId, nodeId, "failing.txt",
-                "kb/" + kbId + "/" + UUID.randomUUID() + "/failing.txt", 3);
+        String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/failing.txt";
+        long documentId = insertDocumentRow(kbId, nodeId, "failing.txt", objectKey, 3);
+        // Since Task 7 the pipeline really parses the stored object on retry, so the upload must
+        // exist in MinIO for the retry to reach READY.
+        storageService.putText(objectKey, "retry body after the simulated failure");
 
         String function = "fail_ingest_" + UUID.randomUUID().toString().replace("-", "");
         String trigger = "trg_" + function;
@@ -519,6 +535,9 @@ class DocumentUploadTest extends IntegrationTestBase {
                 .getResponse()
                 .getContentAsString();
         long id = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+        // Since Task 7 the ingest pipeline really parses/chunks/embeds, so a KB driving documents
+        // to READY needs an embedding model; the worker fails documents without one.
+        embeddingFixture.wire(id);
         createdKbIds.add(id);
         return id;
     }

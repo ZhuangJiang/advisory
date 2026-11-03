@@ -71,6 +71,9 @@ public abstract class IntegrationTestBase {
         registry.add("app.minio.access-key", () -> MINIO_ACCESS_KEY);
         registry.add("app.minio.secret-key", () -> MINIO_SECRET_KEY);
         registry.add("app.minio.bucket", () -> MINIO_BUCKET);
+        // Selects the deterministic stub EmbeddingGateway (TestEmbeddingGatewayConfig) instead of the
+        // real Spring AI gateway, so no integration test ever performs provider network calls.
+        registry.add("app.embedding.gateway", () -> "stub");
     }
 
     @BeforeAll

@@ -10,6 +10,8 @@ import com.advisory.knowledge.domain.KnowledgeBase;
 import com.advisory.knowledge.repo.KnowledgeBaseRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,15 +20,24 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Knowledge base lifecycle and listing.
+ * Knowledge base lifecycle, listing and reindexing.
  *
  * <p>Listing is done with {@code JdbcTemplate} so the per-row {@code documentCount} is resolved by a
  * {@code LEFT JOIN LATERAL} in a single query; the {@code documents} table has no JPA entity yet.
  * Deletion rejects knowledge bases that are still referenced by an {@code agents} row (also no entity
  * yet) or that are mid-reindex.</p>
+ *
+ * <p>{@link #reindex(Long)} follows ruling R6: a CAS on {@code reindex_status} marks the knowledge
+ * base {@code REINDEXING} before the background task is handed to the worker's dedicated single
+ * thread executor; the task resets every non-{@code DELETED} document to {@code PENDING} and drives
+ * it through the ingest pipeline synchronously, then settles the status {@code READY}/{@code
+ * FAILED} in a {@code finally} so the knowledge base can never stay bricked at {@code REINDEXING}.
+ * It runs on the worker's shared idle counter, so tests can {@code awaitIdle} the whole reindex.</p>
  */
 @Service
 public class KnowledgeBaseService {
+
+    private static final Logger log = LoggerFactory.getLogger(KnowledgeBaseService.class);
 
     private static final int MAX_NAME_LENGTH = 128;
     private static final int MAX_PAGE_SIZE = 100;
@@ -52,11 +63,16 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseRepository repository;
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
+    private final DocumentIngestWorker worker;
 
-    public KnowledgeBaseService(KnowledgeBaseRepository repository, JdbcTemplate jdbc, ObjectMapper objectMapper) {
+    public KnowledgeBaseService(KnowledgeBaseRepository repository,
+                                JdbcTemplate jdbc,
+                                ObjectMapper objectMapper,
+                                DocumentIngestWorker worker) {
         this.repository = repository;
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.worker = worker;
     }
 
     @Transactional
@@ -134,6 +150,92 @@ public class KnowledgeBaseService {
     private KnowledgeBase find(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
+    }
+
+    /**
+     * Starts a full reindex (ruling R6), in this exact order —
+     * <ol>
+     *   <li>404 when the knowledge base does not exist;</li>
+     *   <li>CAS {@code reindex_status -> 'REINDEXING'}; zero rows = already reindexing = 409;</li>
+     *   <li>a knowledge base without an embedding model is restored to its previous status and
+     *       rejected 400 (otherwise it would brick at REINDEXING with nothing to embed);</li>
+     *   <li>the background rebuild is handed to the dedicated reindex executor (tracked by the
+     *       ingest worker's idle counter); a rejected hand-off restores the status to
+     *       {@code FAILED}.</li>
+     * </ol>
+     * The endpoint returns 202 immediately; {@link #runReindex(Long)} does the work.
+     */
+    public void reindex(Long kbId) {
+        find(kbId); // 404 RESOURCE_NOT_FOUND for unknown ids
+        String previousStatus = jdbc.queryForObject(
+                "SELECT reindex_status FROM knowledge_bases WHERE id = ?", String.class, kbId);
+        int updated = jdbc.update("""
+                UPDATE knowledge_bases SET reindex_status = 'REINDEXING'
+                WHERE id = ? AND reindex_status <> 'REINDEXING'
+                """, kbId);
+        if (updated == 0) {
+            throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引");
+        }
+        Long embeddingModelId = jdbc.queryForObject(
+                "SELECT embedding_model_id FROM knowledge_bases WHERE id = ?", Long.class, kbId);
+        if (embeddingModelId == null) {
+            // Restore the status the CAS overwrote (not a hardcoded READY — a FAILED knowledge
+            // base without an embedding model must stay FAILED, ruling R6 step 3).
+            jdbc.update("""
+                    UPDATE knowledge_bases SET reindex_status = ?
+                    WHERE id = ? AND reindex_status = 'REINDEXING'
+                    """, previousStatus, kbId);
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "知识库未配置 embedding 模型");
+        }
+        boolean handedOff = worker.submitReindexTask(() -> runReindex(kbId));
+        if (!handedOff) {
+            // Never leave the knowledge base bricked at REINDEXING (ruling R6).
+            jdbc.update("""
+                    UPDATE knowledge_bases SET reindex_status = 'FAILED'
+                    WHERE id = ? AND reindex_status = 'REINDEXING'
+                    """, kbId);
+            log.error("Reindex task for knowledge base {} could not be handed off", kbId);
+        }
+    }
+
+    /**
+     * The reindex body, running on the dedicated reindex thread: reset all non-DELETED documents of
+     * the knowledge base to PENDING with a cleared {@code error_msg}, drive each through the same
+     * (synchronous) ingest pipeline, then settle {@code reindex_status}: READY when no document is
+     * FAILED, FAILED otherwise; zero documents settle READY.
+     */
+    private void runReindex(Long kbId) {
+        try {
+            jdbc.update("""
+                    UPDATE documents SET status = 'PENDING', error_msg = NULL, updated_at = now()
+                    WHERE kb_id = ? AND status <> 'DELETED'
+                    """, kbId);
+            List<Long> ids = jdbc.queryForList(
+                    "SELECT id FROM documents WHERE kb_id = ? AND status <> 'DELETED' ORDER BY id",
+                    Long.class, kbId);
+            for (Long id : ids) {
+                worker.runPipeline(id);
+            }
+        } catch (RuntimeException e) {
+            // The pipeline fails documents individually; nothing escaping this thread may stop the
+            // knowledge base from being settled in the finally block below.
+            log.error("Reindex of knowledge base {} failed", kbId, e);
+        } finally {
+            settleReindexStatus(kbId);
+        }
+    }
+
+    /** CAS from REINDEXING to READY/FAILED based on whether any document ended FAILED. */
+    private void settleReindexStatus(Long kbId) {
+        Integer failed = jdbc.queryForObject(
+                "SELECT count(*) FROM documents WHERE kb_id = ? AND status = 'FAILED'",
+                Integer.class, kbId);
+        String target = (failed != null && failed > 0) ? "FAILED" : "READY";
+        jdbc.update("""
+                UPDATE knowledge_bases SET reindex_status = ?
+                WHERE id = ? AND reindex_status = 'REINDEXING'
+                """, target, kbId);
+        log.info("Reindex of knowledge base {} settled to {}", kbId, target);
     }
 
     private static String validateName(String raw, int maxLength) {
