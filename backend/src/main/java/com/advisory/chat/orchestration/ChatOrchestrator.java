@@ -243,7 +243,7 @@ public class ChatOrchestrator {
             String numbered = PromptTemplates.numberedEvidence(citations);
             try {
                 answer = timed(() -> gateway.chat(agent.chatModelId(), agent.temperature(),
-                        PromptTemplates.answerSystem(),
+                        PromptTemplates.answerSystem(agent.systemPrompt()),
                         PromptTemplates.answerUser(trimmedQuestion, numbered)));
                 steps.add(step(round, Phase.ANSWER, "基于 " + citations.size() + " 个片段生成答案",
                         "{\"citations\":" + citations.size() + "}", startedAt));

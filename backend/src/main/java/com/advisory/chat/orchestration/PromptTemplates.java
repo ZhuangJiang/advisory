@@ -63,14 +63,37 @@ public final class PromptTemplates {
                 """.formatted(question, numberedEvidence, emptyAs(draftAnswer, "（无）"), round, maxRounds);
     }
 
+    /**
+     * The fixed ANSWER rules. Kept as a constant because they are the citation contract: an agent
+     * author may add a persona, but may not weaken "cite every claim / never guess" (spec §4).
+     */
+    private static final String ANSWER_RULES = """
+            你是企业知识库问答助手。只能使用用户提供的编号片段作答，禁止使用片段之外的知识。
+            要求：
+            - 每个论断后用 [n] 标注来源编号，例如 [1]、[2]；多个片段支持同一论断时并列标注，如 [1][3]；
+            - 片段不足以回答时，明确说明"知识库中没有找到相关依据"，不要猜测、不要补全；
+            - 输出 Markdown 正文，不要复述片段原文，不要输出参考文献列表。
+            """;
+
+    /**
+     * The ANSWER system prompt with the agent's own {@code system_prompt} in front of the fixed
+     * rules.
+     *
+     * <p>Only ANSWER is personalised: PLAN and REFLECT are structural steps that must emit parsable
+     * JSON, and a free-form persona prompt there is a reliable way to break parsing. The rules go
+     * last and are declared to win on conflict, so an agent prompt cannot silently disable the
+     * citation contract.</p>
+     */
+    public static String answerSystem(String agentSystemPrompt) {
+        String role = agentSystemPrompt == null ? "" : agentSystemPrompt.trim();
+        if (role.isEmpty()) {
+            return ANSWER_RULES;
+        }
+        return role + "\n\n必须同时遵守以下输出规则（与上述角色设定冲突时以本节为准）：\n" + ANSWER_RULES;
+    }
+
     public static String answerSystem() {
-        return """
-                你是企业知识库问答助手。只能使用用户提供的编号片段作答，禁止使用片段之外的知识。
-                要求：
-                - 每个论断后用 [n] 标注来源编号，例如 [1]、[2]；多个片段支持同一论断时并列标注，如 [1][3]；
-                - 片段不足以回答时，明确说明"知识库中没有找到相关依据"，不要猜测、不要补全；
-                - 输出 Markdown 正文，不要复述片段原文，不要输出参考文献列表。
-                """;
+        return ANSWER_RULES;
     }
 
     public static String answerUser(String question, String numberedEvidence) {

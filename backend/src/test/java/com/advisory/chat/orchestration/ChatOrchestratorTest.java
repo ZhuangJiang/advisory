@@ -173,6 +173,27 @@ class ChatOrchestratorTest {
         assertEquals(3, query.queries().size(), "PLAN output is clamped to at most three queries");
     }
 
+    /**
+     * Task 13 fix: {@code agents.system_prompt} used to be stored, versioned and editable but never
+     * sent to the model — the agent's whole customisation was a no-op. It now leads the ANSWER
+     * instructions; PLAN and REFLECT keep their fixed prompts because they must emit parsable JSON.
+     */
+    @Test
+    void agentSystemPromptLeadsTheAnswerInstructions() {
+        gateway.plans.add(new PlanResult(List.of("q1")));
+        gateway.reflects.add(new ReflectResult(true, List.of(), List.of(), "draft"));
+
+        orchestrator.run(agent(3, 20), "问题", sink);
+
+        String system = gateway.answerSystemPrompts.get(0);
+        assertTrue(system.startsWith("system prompt"),
+                "the agent's own prompt must reach the model, not just the database");
+        assertTrue(system.contains("[1]"), "the citation contract still applies after the agent prompt");
+        assertTrue(system.contains("知识库中没有找到"), "the anti-hallucination rule is not overridable");
+        assertFalse(gateway.planSystemPrompts.get(0).contains("system prompt"),
+                "PLAN must keep its fixed JSON-only prompt");
+    }
+
     // ------------------------------------------------------------------ 5. no evidence
 
     @Test
@@ -231,6 +252,7 @@ class ChatOrchestratorTest {
         private final Deque<Object> answers = new ArrayDeque<>();
         private final List<String> answerSystemPrompts = new ArrayList<>();
         private final List<String> answerUserPrompts = new ArrayList<>();
+        private final List<String> planSystemPrompts = new ArrayList<>();
         private int planCalls;
         private int reflectCalls;
         private int answerCalls;
@@ -252,6 +274,7 @@ class ChatOrchestratorTest {
         public <T> T chatStructured(Long modelId, String systemPrompt, String userPrompt, Class<T> type) {
             if (type == PlanResult.class) {
                 planCalls++;
+                planSystemPrompts.add(systemPrompt);
                 sleepIfAsked();
                 return type.cast(next(plans, new PlanResult(List.of("default-query"))));
             }
