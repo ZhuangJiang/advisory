@@ -10,3 +10,6 @@ backend/.settings
 backend/.classpath
 backend/.project
 backend/.lithe/
+
+# Local WorkBuddy work notes (memory logs), not part of the deliverable
+.workbuddy/
