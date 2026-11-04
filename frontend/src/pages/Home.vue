@@ -8,7 +8,8 @@ const auth = useAuthStore()
   <el-card shadow="never">
     <h2 class="title">欢迎，{{ auth.user?.username }}</h2>
     <p class="hint">
-      平台骨架已就绪。对话、知识库、提供商与 Agent 配置、会话审计页面将在后续任务接入。
+      从「对话」开始提问；知识库、Agent 配置、会话审计与用户管理在左侧导航中。
+      管理员可审计全部会话，但只能只读查看他人会话。
     </p>
     <el-descriptions :column="2" border class="details">
       <el-descriptions-item label="角色">

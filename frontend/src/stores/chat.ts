@@ -60,7 +60,7 @@ function nextKey(): string {
   return `local-${keySeq}`
 }
 
-function fromDetail(detail: MessageDetail): Partial<ChatMessage> {
+function fromDetail(detail: MessageDetail): Omit<ChatMessage, 'key' | 'id' | 'role'> {
   return {
     status: detail.status,
     content: detail.content ?? '',
@@ -76,6 +76,19 @@ function fromDetail(detail: MessageDetail): Partial<ChatMessage> {
     tokenUsage: detail.tokenUsage,
     latencyMs: detail.latencyMs,
     createdAt: detail.createdAt
+  }
+}
+
+/**
+ * Maps a persisted message onto the view model. The audit page reuses this so a read-only thread and
+ * a live one render through the same `MessageBubble` / `ReasoningPanel` pair.
+ */
+export function toChatMessage(detail: MessageDetail, key: string): ChatMessage {
+  return {
+    key,
+    id: detail.id,
+    role: detail.role,
+    ...fromDetail(detail)
   }
 }
 
