@@ -33,6 +33,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/pages/Home.vue')
       },
       {
+        path: 'chat',
+        name: 'chat',
+        component: () => import('@/pages/chat/ChatView.vue')
+      },
+      {
         path: 'knowledge-bases',
         name: 'knowledge-bases',
         component: () => import('@/pages/knowledge/KnowledgeBaseList.vue')

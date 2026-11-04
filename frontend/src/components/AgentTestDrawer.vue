@@ -132,7 +132,7 @@ function prettyPayload(payload: string): string {
     </el-card>
 
     <div v-for="[round, steps] in rounds" :key="round" class="round">
-      <div class="round-title">第 {{ round + 1 }} 轮</div>
+      <div class="round-title">第 {{ round }} 轮</div>
       <el-timeline>
         <el-timeline-item
           v-for="(step, index) in steps"

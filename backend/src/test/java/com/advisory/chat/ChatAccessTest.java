@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -99,6 +101,39 @@ class ChatAccessTest extends ChatFixture {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+    }
+
+    @Test
+    void adminCannotPostIntoSomeoneElsesConversation() throws Exception {
+        long conversationId = createConversation(userToken);
+
+        // reading is allowed (spec §8: ADMIN 全量只读审计), writing on the user's behalf is not
+        mockMvc.perform(get("/api/conversations/" + conversationId + "/messages")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/conversations/" + conversationId + "/messages")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"替用户提问\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40300));
+
+        assertEquals(0L, (long) jdbc.queryForObject(
+                        "SELECT count(*) FROM messages WHERE conversation_id = ?", Long.class,
+                        conversationId),
+                "a rejected request must not leave a USER row behind");
+    }
+
+    @Test
+    void adminCanAskInTheirOwnConversation() throws Exception {
+        long adminConversation = createConversation(adminToken);
+
+        mockMvc.perform(post("/api/conversations/" + adminConversation + "/messages")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"报销时限是多久？\"}"))
+                .andExpect(status().isOk());
     }
 
     @Test

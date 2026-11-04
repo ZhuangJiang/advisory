@@ -153,6 +153,11 @@ public class ChatService {
                     "content must not exceed " + MAX_QUESTION_LENGTH + " characters");
         }
         Conversation conversation = requireConversation(conversationId, user.id(), user.role());
+        // An administrator may read any thread (that is how the audit view works) but must not answer
+        // on someone else's behalf: messages would be attributed to the wrong person (spec §8).
+        if (user.role() == UserRole.ADMIN && conversation.userId() != user.id()) {
+            throw new AppException(ErrorCode.FORBIDDEN, "管理员不能代替用户提问");
+        }
         if (!lock.tryAcquire(conversationId)) {
             throw new AppException(ErrorCode.CONVERSATION_BUSY,
                     "该会话已有进行中的提问，请等待当前回答完成");
