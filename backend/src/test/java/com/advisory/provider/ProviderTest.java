@@ -415,6 +415,127 @@ class ProviderTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(0));
     }
 
+    /**
+     * {@code remote=true} spends the configured API key against an external host, so it is
+     * ADMIN-only; the local model list stays open to every authenticated user.
+     */
+    @Test
+    void remoteModelListingRequiresAdminRole() throws Exception {
+        try (FakeProviderServer server = FakeProviderServer.start(
+                "{\"data\":[{\"id\":\"gpt-4o-mini\"}]}")) {
+            long id = createProvider("OPENAI_COMPATIBLE", server.baseUrl(), "remote-key-1");
+
+            mockMvc.perform(get("/api/providers/" + id + "/models")
+                            .param("remote", "true")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value(40300));
+
+            // remote=false / absent: still just authenticated
+            mockMvc.perform(get("/api/providers/" + id + "/models")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data").isArray());
+
+            mockMvc.perform(get("/api/providers/" + id + "/models")
+                            .param("remote", "true")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.ok").value(true))
+                    .andExpect(jsonPath("$.data.models[0]").value("gpt-4o-mini"));
+            assertEquals("/v1/models", server.lastPath(), "the ADMIN probe must really have run");
+        }
+    }
+
+    /**
+     * Global list contract: {@code page} is 0-based, {@code size} defaults to 20 and is capped at
+     * 100, rows come back ordered by id and the envelope carries {@code PageResponse} fields.
+     */
+    @Test
+    void providerListIsPaginated() throws Exception {
+        // size above the cap is clamped to 100, never echoed back
+        String oversized = mockMvc.perform(get("/api/providers")
+                        .param("size", "1000")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value(100))
+                .andReturn().getResponse().getContentAsString();
+        long totalBefore = ((Number) JsonPath.read(oversized, "$.data.total")).longValue();
+        assertTrue(totalBefore >= 0);
+
+        long first = createProvider("OLLAMA", "http://127.0.0.1:9", null);
+        long second = createProvider("OLLAMA", "http://127.0.0.1:9", null);
+        long third = createProvider("OLLAMA", "http://127.0.0.1:9", null);
+
+        String page0 = mockMvc.perform(get("/api/providers")
+                        .param("page", "0").param("size", "1")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(1))
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        String page1 = mockMvc.perform(get("/api/providers")
+                        .param("page", "1").param("size", "1")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+
+        long total0 = ((Number) JsonPath.read(page0, "$.data.total")).longValue();
+        long total1 = ((Number) JsonPath.read(page1, "$.data.total")).longValue();
+        assertEquals(totalBefore + 3, total0, "three created providers must be counted");
+        assertEquals(total0, total1, "the total is page-independent");
+        assertTrue(total0 >= 3);
+
+        long id0 = ((Number) JsonPath.read(page0, "$.data.content[0].id")).longValue();
+        long id1 = ((Number) JsonPath.read(page1, "$.data.content[0].id")).longValue();
+        assertNotEquals(id0, id1, "page 0 and page 1 must be disjoint rows");
+        assertTrue(id0 < id1, "rows are ordered by id ascending");
+
+        // the created rows are all present somewhere in the ordered listing (id asc)
+        String all = getProviders(adminToken);
+        List<Object> ids = JsonPath.read(all, "$.data.content[*].id");
+        List<Number> numericIds = new ArrayList<>();
+        ids.forEach(value -> numericIds.add((Number) value));
+        for (long wanted : new long[] {first, second, third}) {
+            assertTrue(numericIds.stream().anyMatch(n -> n.longValue() == wanted),
+                    "provider " + wanted + " must appear in the listing");
+        }
+    }
+
+    /**
+     * Base-URL normalization seen from the wire: trailing slash stripped, a base that already ends
+     * in {@code /v1} does not get a second {@code /v1}, and OLLAMA gets {@code /api/tags} with
+     * <em>no</em> Authorization header even though a key is configured.
+     */
+    @Test
+    void probeNormalizesBaseUrlsAndNeverSendsKeysToOllama() throws Exception {
+        try (FakeProviderServer server = FakeProviderServer.start(
+                "{\"data\":[{\"id\":\"gpt-4o-mini\"}],\"models\":[{\"name\":\"llama3:latest\"}]}")) {
+
+            // trailing slash: http://host:port/  ->  /v1/models (an unstripped slash would give
+            // //v1/models)
+            long trailing = createProvider("OPENAI_COMPATIBLE", server.baseUrl() + "/", "trailing-key-111");
+            probeExpectingAuthorization(server, trailing, "Bearer trailing-key-111");
+            assertEquals("/v1/models", server.lastPath());
+
+            // base already ending in /v1: the /v1 suffix must not be appended twice
+            // (http://host:port/v1 + /v1/models would be the path /v1/v1/models)
+            long v1Base = createProvider("OPENAI_COMPATIBLE", server.baseUrl() + "/v1", "v1-key-22222");
+            probeExpectingAuthorization(server, v1Base, "Bearer v1-key-22222");
+            assertEquals("/v1/models", server.lastPath());
+
+            // OLLAMA probes /api/tags and never carries the configured key
+            long ollama = createProvider("OLLAMA", server.baseUrl() + "/", "ollama-key-333");
+            probeExpectingAuthorization(server, ollama, null);
+            assertEquals("/api/tags", server.lastPath());
+            assertNull(server.lastAuthorization(),
+                    "an OLLAMA probe must not send the Authorization header");
+        }
+    }
+
     // ------------------------------------------------------------------ 6. import idempotency
 
     @Test
@@ -490,17 +611,24 @@ class ProviderTest extends IntegrationTestBase {
 
             // re-encryption: a new key is stored as a fresh ciphertext and used as the bearer token
             String secondKey = "second-key-BBBB-888";
-            mockMvc.perform(patch("/api/providers/" + id)
+            String patchBody = mockMvc.perform(patch("/api/providers/" + id)
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"apiKey\":\"" + secondKey + "\"}"))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.apiKeyMasked")
+                            .value(secondKey.substring(0, 4) + "****"))
+                    .andReturn().getResponse().getContentAsString();
 
             String cipher = jdbc.queryForObject(
                     "SELECT api_key_cipher FROM model_providers WHERE id = ?", String.class, id);
             assertNotNull(cipher);
             assertNotEquals(secondKey, cipher, "the new key must be encrypted, not stored raw");
             assertEquals(secondKey, cryptoService.decrypt(cipher), "the cipher must round-trip");
+            // the PATCH response carries the mask only: no plaintext, no ciphertext, no cipher field
+            assertFalse(patchBody.contains(secondKey), "the PATCH response must not echo the key");
+            assertFalse(patchBody.contains(cipher), "the PATCH response must not echo the ciphertext");
+            assertFalse(patchBody.contains("apiKeyCipher"), "no response field may expose the cipher");
             Map<String, Object> rekeyed = providerJson(getProviders(adminToken), id);
             assertNotNull(rekeyed);
             assertEquals(secondKey.substring(0, 4) + "****", rekeyed.get("apiKeyMasked"));
@@ -524,7 +652,11 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     private String getProviders(String token) throws Exception {
+        // size=100 (the cap) so a lookup by id always lands on page 0 regardless of how many
+        // providers other tests left behind; the pagination contract itself is asserted by
+        // providerListIsPaginated.
         return mockMvc.perform(get("/api/providers")
+                        .param("size", "100")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
@@ -570,7 +702,7 @@ class ProviderTest extends IntegrationTestBase {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> providerJson(String listBody, long providerId) {
-        List<Map<String, Object>> providers = JsonPath.read(listBody, "$.data");
+        List<Map<String, Object>> providers = JsonPath.read(listBody, "$.data.content");
         for (Map<String, Object> provider : providers) {
             if (provider.get("id") instanceof Number number && number.longValue() == providerId) {
                 return provider;

@@ -7,6 +7,7 @@ import com.advisory.knowledge.retrieval.RetrievalQuery;
 import com.advisory.knowledge.retrieval.RetrievalService;
 import com.advisory.knowledge.retrieval.RetrievedChunk;
 import com.advisory.knowledge.retrieval.RrfFusion;
+import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
@@ -45,6 +46,9 @@ class RetrievalTest extends IntegrationTestBase {
     private JdbcTemplate jdbc;
 
     @Autowired
+    private CryptoService cryptoService;
+
+    @Autowired
     private RetrievalService retrievalService;
 
     @Autowired
@@ -55,7 +59,7 @@ class RetrievalTest extends IntegrationTestBase {
 
     @BeforeEach
     void createFixtures() {
-        embeddingFixture = EmbeddingModelFixture.create(jdbc);
+        embeddingFixture = EmbeddingModelFixture.create(jdbc, cryptoService);
     }
 
     @AfterEach

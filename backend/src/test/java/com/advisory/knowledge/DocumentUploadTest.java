@@ -7,6 +7,7 @@ import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.service.DocumentIngestWorker;
 import com.advisory.knowledge.service.DocumentService;
 import com.advisory.knowledge.service.StorageService;
+import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
@@ -72,6 +73,9 @@ class DocumentUploadTest extends IntegrationTestBase {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private CryptoService cryptoService;
+
+    @Autowired
     private DocumentIngestWorker worker;
 
     @Autowired
@@ -96,7 +100,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         adminUserId = admin.getId();
         adminToken = login(admin.getUsername());
         userToken = login(user.getUsername());
-        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate, cryptoService);
     }
 
     @AfterEach

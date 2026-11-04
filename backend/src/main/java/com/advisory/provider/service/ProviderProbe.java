@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
+import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -88,7 +89,10 @@ public class ProviderProbe {
                 .timeout(PROBE_TIMEOUT)
                 .header("Accept", "application/json")
                 .GET();
-        if (apiKey != null && !apiKey.isBlank()) {
+        // Ollama neither expects nor wants bearer authentication: the key is only ever sent to
+        // OPENAI_COMPATIBLE endpoints, never to an OLLAMA base URL.
+        if (provider.getType() == ProviderType.OPENAI_COMPATIBLE
+                && apiKey != null && !apiKey.isBlank()) {
             requestBuilder.header("Authorization", "Bearer " + apiKey);
         }
 
@@ -112,6 +116,9 @@ public class ProviderProbe {
             return ProbeResult.failure(ProbeResult.AUTH_FAILED);
         }
         if (status < 200 || status >= 300) {
+            // Non-401/403 non-2xx has no dedicated code among the four spec codes, so it maps to
+            // NETWORK_UNREACHABLE; the actual status is logged so the operator can still tell a
+            // 404 from a 500 while the envelope stays spec-compliant.
             log.warn("Probe of provider {} returned HTTP {}", provider.getId(), status);
             return ProbeResult.failure(ProbeResult.NETWORK_UNREACHABLE);
         }
@@ -151,12 +158,22 @@ public class ProviderProbe {
         return base.endsWith("/v1") ? base + "/models" : base + "/v1/models";
     }
 
-    /** Walks the cause chain: timeout beats connection errors, everything else is unreachable. */
-    private static String classify(IOException e) {
+    /**
+     * Walks the cause chain: timeout beats connection errors, everything else is unreachable.
+     * Package-private for the deterministic {@code ProviderProbeClassifyTest} (no network, no
+     * timing).
+     *
+     * <p>In the JDK, {@code java.net.http.HttpConnectTimeoutException extends HttpTimeoutException}
+     * (verified with {@code javap} against JDK 21), so the single {@code HttpTimeoutException}
+     * branch already classifies <em>connect</em> timeouts as {@code TIMEOUT} — no separate branch
+     * is needed for them. {@code SocketTimeoutException} sits alongside it for a raw socket read
+     * timeout should the JDK ever surface one.</p>
+     */
+    static String classify(IOException e) {
         int depth = 0;
         for (Throwable t = e; t != null && depth < CAUSE_CHAIN_LIMIT; t = t.getCause(), depth++) {
-            if (t instanceof HttpTimeoutException) {
-                // also covers java.net.http.ConnectTimeoutException
+            if (t instanceof HttpTimeoutException || t instanceof SocketTimeoutException) {
+                // HttpTimeoutException covers HttpConnectTimeoutException (its subclass)
                 return ProbeResult.TIMEOUT;
             }
             if (t instanceof UnknownHostException || t instanceof ConnectException

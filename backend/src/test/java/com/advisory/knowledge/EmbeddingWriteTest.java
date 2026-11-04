@@ -12,6 +12,7 @@ import com.advisory.knowledge.ingest.EmbeddingGateway;
 import com.advisory.knowledge.ingest.TextChunk;
 import com.advisory.knowledge.service.DocumentIngestWorker;
 import com.advisory.knowledge.service.StorageService;
+import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
@@ -72,6 +73,9 @@ class EmbeddingWriteTest extends IntegrationTestBase {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private CryptoService cryptoService;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -100,7 +104,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
     void createFixtures() throws Exception {
         User admin = createUser(UserRole.ADMIN);
         adminToken = login(admin.getUsername());
-        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate, cryptoService);
     }
 
     @AfterEach

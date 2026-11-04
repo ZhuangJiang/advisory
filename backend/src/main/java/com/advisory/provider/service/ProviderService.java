@@ -1,5 +1,6 @@
 package com.advisory.provider.service;
 
+import com.advisory.common.api.PageResponse;
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
 import com.advisory.provider.api.dto.CreateModelRequest;
@@ -23,6 +24,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +58,7 @@ public class ProviderService {
     private static final int MAX_MODEL_NAME_LENGTH = 255;
     private static final String MASK_SUFFIX = "****";
     private static final int MASK_PREFIX_LENGTH = 4;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private static final String LIST_SQL = """
             SELECT p.id,
@@ -111,21 +115,37 @@ public class ProviderService {
 
     // ------------------------------------------------------------------ providers
 
-    /** Every provider with its model count and masked key. Any authenticated user may call it. */
+    /**
+     * One page of providers ordered by id, with model count and masked key. Page is 0-based; size
+     * defaults to 20 and is capped at 100 (the global list-endpoint contract). Any authenticated
+     * user may call it.
+     */
     @Transactional(readOnly = true)
-    public List<ProviderResponse> list() {
-        return jdbc.query(LIST_SQL, (rs, rowNum) -> {
-            long id = rs.getLong("id");
-            return new ProviderResponse(
-                    id,
-                    rs.getString("name"),
-                    ProviderType.valueOf(rs.getString("type")),
-                    rs.getString("base_url"),
-                    rs.getBoolean("enabled"),
-                    rs.getTimestamp("created_at").toInstant(),
-                    rs.getLong("model_count"),
-                    mask(id, rs.getString("api_key_cipher")));
-        });
+    public PageResponse<ProviderResponse> list(int page, int size) {
+        int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        int pageIndex = Math.max(page, 0);
+
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM model_providers", Long.class);
+        long totalCount = total == null ? 0 : total;
+
+        List<ProviderResponse> items = jdbc.query(
+                LIST_SQL + " LIMIT ? OFFSET ?", this::mapProvider,
+                pageSize, pageIndex * pageSize);
+        return PageResponse.of(items, pageIndex, pageSize, totalCount);
+    }
+
+    private ProviderResponse mapProvider(ResultSet rs, int rowNum) throws SQLException {
+        long id = rs.getLong("id");
+        return new ProviderResponse(
+                id,
+                rs.getString("name"),
+                ProviderType.valueOf(rs.getString("type")),
+                rs.getString("base_url"),
+                rs.getBoolean("enabled"),
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getLong("model_count"),
+                mask(id, rs.getString("api_key_cipher")));
     }
 
     @Transactional

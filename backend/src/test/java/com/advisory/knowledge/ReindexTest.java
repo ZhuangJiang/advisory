@@ -6,6 +6,7 @@ import com.advisory.auth.repo.UserRepository;
 import com.advisory.knowledge.ingest.EmbeddingGateway;
 import com.advisory.knowledge.service.DocumentIngestWorker;
 import com.advisory.knowledge.service.StorageService;
+import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
@@ -70,6 +71,9 @@ class ReindexTest extends IntegrationTestBase {
     @Autowired
     private StorageService storage;
 
+    @Autowired
+    private CryptoService cryptoService;
+
     @Value("${app.embedding.dimension}")
     private int dimension;
 
@@ -87,7 +91,7 @@ class ReindexTest extends IntegrationTestBase {
         User user = createUser(UserRole.USER, "user");
         adminToken = login(admin.getUsername());
         userToken = login(user.getUsername());
-        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate, cryptoService);
     }
 
     @AfterEach

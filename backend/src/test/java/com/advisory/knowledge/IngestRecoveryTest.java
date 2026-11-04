@@ -5,6 +5,7 @@ import com.advisory.auth.domain.UserRole;
 import com.advisory.auth.repo.UserRepository;
 import com.advisory.knowledge.service.DocumentIngestWorker;
 import com.advisory.knowledge.service.StorageService;
+import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
@@ -55,6 +56,9 @@ class IngestRecoveryTest extends IntegrationTestBase {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private CryptoService cryptoService;
+
+    @Autowired
     private DocumentIngestWorker worker;
 
     @Autowired
@@ -71,7 +75,7 @@ class IngestRecoveryTest extends IntegrationTestBase {
     void createFixtures() throws Exception {
         User admin = createUser();
         adminToken = login(admin.getUsername());
-        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate);
+        embeddingFixture = EmbeddingModelFixture.create(jdbcTemplate, cryptoService);
     }
 
     @AfterEach
