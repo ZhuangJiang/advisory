@@ -7,6 +7,16 @@
 - 对象存储：MinIO（文档原文件与解析中间产物）
 - 前端：Vue 3 + Vite + TypeScript（Element Plus），生产由 nginx 托管并反代 `/api`
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/backend.md`](docs/backend.md) | 后端分层、请求链路、权限矩阵、数据模型、入库状态机、检索与编排、错误码、测试与改动指引 |
+| [`docs/frontend.md`](docs/frontend.md) | 前端目录、HTTP/SSE 封装、状态管理、路由与权限、页面组件、测试与改动指引 |
+| [`docs/acceptance.md`](docs/acceptance.md) | 逐条验收结果与验收中修掉的缺陷 |
+| [`AGENTS.md`](AGENTS.md) | 跨前后端的硬约定、Agent 模块要点、踩过的坑、验证清单 |
+| [`docs/superpowers/specs/`](docs/superpowers/specs/) | 设计 spec 与实施计划（裁决 R1–R9 的出处） |
+
 ## 本地启动
 
 ```powershell
@@ -90,5 +100,5 @@ backend/          Spring Boot 后端（Maven，artifact: advisory-backend）
 frontend/         Vue 3 SPA（Vite；生产镜像由 nginx 托管）
 deploy/           nginx.conf、init-bucket.sh
 scripts/          smoke.ps1（端到端冒烟）、fake-model-server.mjs（本地模型桩）
-docs/             设计 spec、实施计划、验收记录
+docs/             backend.md、frontend.md（说明文档）；acceptance.md（验收）；spec 与实施计划
 ```
