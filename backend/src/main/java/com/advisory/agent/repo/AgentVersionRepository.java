@@ -11,11 +11,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC access for {@code agent_versions}.
+ * {@code agent_versions} 的 JDBC 访问层。
  *
- * <p>Append-only: {@link #insert} is the only write. The snapshot is stored as {@code jsonb} and
- * parsed back into {@link AgentSnapshot} on every read, so what a historical conversation replays is
- * exactly the JSON that was written — no live row is consulted.</p>
+ * <p>只追加：{@link #insert} 是唯一的写操作。快照以 {@code jsonb} 存储，每次读取都重新解析成
+ * {@link AgentSnapshot}，因此历史会话重放的是当初写进去的那份 JSON，绝不参考当前行。</p>
  */
 @Repository
 public class AgentVersionRepository {
@@ -34,6 +33,7 @@ public class AgentVersionRepository {
         this.objectMapper = objectMapper;
     }
 
+    /** 追加一个版本（只追加，不更新）。 */
     public void insert(long agentId, int version, AgentSnapshot snapshot) {
         try {
             jdbc.update("INSERT INTO agent_versions (agent_id, version, snapshot) VALUES (?, ?, ?::jsonb)",
@@ -43,6 +43,7 @@ public class AgentVersionRepository {
         }
     }
 
+    /** 按版本号倒序返回历史版本。 */
     public List<AgentVersion> findByAgentIdOrderByVersionDesc(long agentId) {
         return jdbc.query("""
                 SELECT id, agent_id, version, snapshot::text AS snapshot, created_at
@@ -52,6 +53,7 @@ public class AgentVersionRepository {
                 """, rowMapper, agentId);
     }
 
+    /** 读取指定版本的快照 JSON。 */
     public Optional<AgentSnapshot> findSnapshot(long agentId, int version) {
         return jdbc.query("""
                 SELECT id, agent_id, version, snapshot::text AS snapshot, created_at
@@ -63,6 +65,7 @@ public class AgentVersionRepository {
                 .findFirst();
     }
 
+    /** 统计版本数量。 */
     public long countByAgentId(long agentId) {
         Long count = jdbc.queryForObject(
                 "SELECT count(*) FROM agent_versions WHERE agent_id = ?", Long.class, agentId);

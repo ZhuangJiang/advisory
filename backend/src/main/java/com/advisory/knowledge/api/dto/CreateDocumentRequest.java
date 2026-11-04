@@ -6,9 +6,9 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 /**
- * Step 3 of the upload flow: register the object that the client PUT directly to MinIO.
+ * 上传流程的第三步：登记客户端刚直传到 MinIO 的那个对象。
  *
- * <p>Idempotent on {@code objectKey}: replaying the same call returns the existing document.</p>
+ * <p>以 {@code objectKey} 幂等：重复调用返回已存在的文档，不会产生重复行。</p>
  */
 public record CreateDocumentRequest(
         @NotNull(message = "must not be null")

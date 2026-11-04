@@ -14,12 +14,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC access for {@code messages}.
+ * {@code messages} 的 JDBC 访问层。
  *
- * <p>The assistant row is inserted as {@code PENDING} before the model is called, so a client that
- * disconnects immediately still leaves a recoverable row — that row id is what the first SSE frame
- * ({@code meta}) carries. Status transitions are separate statements rather than an entity update,
- * which keeps a long-running stream from holding a transaction open.</p>
+ * <p>助手消息在调用模型之前就以 {@code PENDING} 插入，这样即便客户端立刻断开也留下一条可恢复的行——
+ * 首个 SSE 帧（{@code meta}）携带的正是这个行 id。状态流转用独立语句而非实体更新，
+ * 是为了不让一条长时间的流占着事务不放。</p>
  */
 @Repository
 public class MessageRepository {
@@ -51,6 +50,7 @@ public class MessageRepository {
         this.objectMapper = objectMapper;
     }
 
+    /** 插入消息，助手消息初始为 PENDING。 */
     public long insert(long conversationId, String role, String content, MessageStatus status) {
         return jdbc.queryForObject("""
                 INSERT INTO messages (conversation_id, role, content, status)
@@ -58,28 +58,32 @@ public class MessageRepository {
                 """, Long.class, conversationId, role, content, status.name());
     }
 
+    /** 读取单条消息。 */
     public Optional<Message> findById(long id) {
         return jdbc.query("SELECT " + COLUMNS + " FROM messages WHERE id = ?", rowMapper, id)
                 .stream().findFirst();
     }
 
+    /** 读取会话内的消息，按时间正序。 */
     public List<Message> findByConversation(long conversationId) {
         return jdbc.query("SELECT " + COLUMNS
                         + " FROM messages WHERE conversation_id = ? ORDER BY created_at, id",
                 rowMapper, conversationId);
     }
 
+    /** 统计会话内的消息数。 */
     public long countByConversation(long conversationId) {
         Long count = jdbc.queryForObject(
                 "SELECT count(*) FROM messages WHERE conversation_id = ?", Long.class, conversationId);
         return count == null ? 0 : count;
     }
 
+    /** 推进中间状态（PENDING → STREAMING）。 */
     public void updateStatus(long id, MessageStatus status) {
         jdbc.update("UPDATE messages SET status = ? WHERE id = ?", status.name(), id);
     }
 
-    /** Terminal success path: answer, citations, usage, latency and status in one statement. */
+    /** 成功终态：答案、引用、用量、耗时与状态在一条语句里写定。 */
     public void complete(long id, String content, List<RetrievedChunk> citations,
                          TokenUsage usage, long latencyMs, MessageStatus status) {
         jdbc.update("""
@@ -90,7 +94,7 @@ public class MessageRepository {
                 """, content, writeJson(citations), writeJson(usage), latencyMs, status.name(), id);
     }
 
-    /** Terminal failure path: keep the provider message so the user sees why nothing came back. */
+    /** 失败终态：保留提供商返回的信息，让用户知道为什么没有结果。 */
     public void fail(long id, String content, long latencyMs) {
         jdbc.update("""
                 UPDATE messages
@@ -106,7 +110,7 @@ public class MessageRepository {
         try {
             return objectMapper.readValue(json, CITATIONS);
         } catch (Exception e) {
-            // An unreadable citation blob must not hide the answer it belongs to.
+            // 引用数据解析失败时不能连累答案本身：宁可少显示引用，也要把回答展示出来。
             return List.of();
         }
     }

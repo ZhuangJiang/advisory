@@ -6,14 +6,12 @@ import com.advisory.knowledge.retrieval.RetrievedChunk;
 import java.util.List;
 
 /**
- * The full trace of a trial run, returned in the response body only — a trial run writes nothing
- * (spec §12).
+ * 试运行的完整轨迹，只存在于响应体中——试运行不写任何数据（spec §12）。
  *
- * @param version   which snapshot actually ran (resolved from the request, so a client that omitted
- *                  {@code version} can see what it got)
- * @param steps     every executed step, same shape as the persisted {@code reasoning_steps}
- * @param citations the evidence the run used, numbered exactly as the {@code [n]} in the answer
- * @param latencyMs wall-clock time of the whole run, for prompt-tuning comparison
+ * @param version   实际运行的快照版本（由请求解析而来，未传 {@code version} 的客户端也能看到结果）
+ * @param steps     执行过的每一步，结构与落库的 {@code reasoning_steps} 一致
+ * @param citations 本次使用的证据，编号与答案中的 {@code [n]} 完全对应
+ * @param latencyMs 整次运行的耗时，用于对比不同提示词的效果
  */
 public record AgentTestRunResponse(int version, String answer, List<AgentTestRunStep> steps,
                                    List<RetrievedChunk> citations, boolean truncated, long latencyMs) {

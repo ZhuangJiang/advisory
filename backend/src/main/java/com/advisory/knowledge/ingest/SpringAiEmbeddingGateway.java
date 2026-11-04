@@ -14,22 +14,20 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Spring AI backed {@link EmbeddingGateway} over the {@code models}/{@code model_providers} rows.
+ * 基于 Spring AI 的 {@link EmbeddingGateway} 实现，数据来自 {@code models} 与 {@code model_providers}。
  *
- * <p>Batches of 32 texts; two retries (1s, 2s) around the provider call; every returned vector is
- * checked against {@code app.embedding.dimension} <em>before</em> the method returns, so a
- * dimension mismatch can never reach {@link ChunkWriter} (which re-checks inside its own
- * transaction). Failures never log chunk or document text — only exception metadata.</p>
+ * <p>每批 32 条文本，提供商调用外层重试两次（退避 1 秒、2 秒）；每个返回向量都在方法返回<em>之前</em>
+ * 与 {@code app.embedding.dimension} 比对，因此维度不符的数据绝不会流到 {@link ChunkWriter}
+ * （那里会在自己的事务内再校验一次）。失败日志只记异常元数据，绝不打印片段或文档正文。</p>
  *
- * <p>{@link EmbeddingClientFactory} keeps Spring AI client construction in one place, which makes
- * this class unit-testable with a fake factory and no network. The bean itself lives in
- * {@code KnowledgePipelineConfig} (conditioned on {@code app.embedding.gateway}); it is not a plain
- * component so it is never registered unconditionally.</p>
+ * <p>Spring AI 客户端的构造被 {@link EmbeddingClientFactory} 收在一处，本类因此可以用假工厂做单元测试、
+ * 完全不联网。bean 由 {@code KnowledgePipelineConfig} 按 {@code app.embedding.gateway} 条件装配，
+ * 而不是标成普通组件——否则它会被无条件注册。</p>
  */
 public class SpringAiEmbeddingGateway implements EmbeddingGateway {
 
     static final int BATCH_SIZE = 32;
-    /** Initial call plus two retries, per the interface contract. */
+    /** 首次调用加两次重试，与接口约定一致。 */
     private static final int MAX_ATTEMPTS = 3;
     private static final long[] BACKOFF_MILLIS = {1000, 2000};
 
@@ -42,6 +40,7 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
         this.dimension = dimension;
     }
 
+    /** 批量向量化并在返回前校验维度。 */
     @Override
     public List<float[]> embed(Long embeddingModelId, List<String> texts) {
         Objects.requireNonNull(embeddingModelId, "embeddingModelId");
@@ -62,7 +61,7 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
         return vectors;
     }
 
-    /** Visible for the unit test that asserts the guard itself and nothing else. */
+    /** 仅为单元测试放开可见性：该测试只断言这道校验本身。 */
     int dimension() {
         return dimension;
     }
@@ -76,9 +75,13 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
     }
 
     /**
-     * Calls the provider; on any exception retries twice with 1s/2s backoff and rethrows the last
-     * failure. Nothing is validated against the dimension here — that happens to each vector in
-     * {@link #embed}, after the batch came back whole.
+     * 调用提供商；任何异常都重试两次（退避 1 秒、2 秒），最终仍失败则抛出最后一次异常。
+     *
+     * <p>此处不校验维度——那是在 {@link #embed} 里、整批返回之后逐向量进行的，避免半批数据被判定为可用。</p>
+     *
+     * @param client 目标模型客户端
+     * @param batch  本批文本
+     * @return 与文本一一对应的向量
      */
     private List<float[]> embedWithRetry(EmbeddingClientFactory.EmbeddingClient client,
                                          List<String> batch) {

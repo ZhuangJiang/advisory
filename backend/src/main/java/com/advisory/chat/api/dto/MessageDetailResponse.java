@@ -10,11 +10,10 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * {@code GET /api/messages/{id}} — the authoritative view of one answer.
+ * {@code GET /api/messages/{id}} 的返回体：单条回答的权威视图。
  *
- * <p>This is what a client calls after an SSE disconnect: {@code steps} and {@code citations} are
- * the persisted copies, not a replay, so a partial stream can always be reconstructed exactly
- * (spec §9, §11).</p>
+ * <p>SSE 断线后客户端就调这个接口：{@code steps} 与 {@code citations} 取自已落库的数据而非重放，
+ * 因此一次被中断的流总能被精确还原（spec §9、§11）。</p>
  */
 public record MessageDetailResponse(long id, long conversationId, String role, MessageStatus status,
                                     String content, List<RetrievedChunk> citations,

@@ -1,12 +1,12 @@
 package com.advisory.knowledge.ingest;
 
 /**
- * One heading and the raw Markdown body that belongs to it.
+ * 一个标题及其下属的原始 Markdown 正文。
  *
- * @param level       heading level (1-6)
- * @param heading     heading text without the leading hashes
- * @param headingPath full path from the document root, e.g. {@code "A > B > C"}
- * @param content     raw Markdown between this heading and the next one
+ * @param level       标题层级（1-6）
+ * @param heading     标题文本，不含前面的井号
+ * @param headingPath 从文档根节点开始的完整路径，例如 {@code "A > B > C"}
+ * @param content     本标题与下一个标题之间的原始 Markdown
  */
 public record ParsedSection(int level, String heading, String headingPath, String content) {
 

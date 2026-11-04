@@ -33,12 +33,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 10: agent configuration, automatic versioning and cross-knowledge-base validation.
+ * Task 10：Agent 配置、自动版本化，以及跨知识库的校验。
  *
- * <p>Every row this class creates is prefixed {@code agent10-} and removed in {@code @AfterEach}
- * (conversations, then agents — their versions cascade — then knowledge bases/nodes, then the
- * provider whose models cascade). Agents and knowledge bases hold {@code ON DELETE RESTRICT}
- * references to {@code models}, so the delete order matters.</p>
+ * <p>本类创建的每一行都以 {@code agent10-} 为前缀，并在 {@code @AfterEach} 中清理
+ * （先会话，再 Agent——版本随之级联——再知识库与节点，最后是模型会一起级联的提供商）。
+ * Agent 与知识库对 {@code models} 持有 {@code ON DELETE RESTRICT} 引用，因此删除顺序不能随意调整。</p>
  */
 class AgentConfigTest extends IntegrationTestBase {
 
@@ -98,11 +97,11 @@ class AgentConfigTest extends IntegrationTestBase {
         jdbc.update("DELETE FROM model_providers WHERE name LIKE 'agent10-prov-%'");
     }
 
-    // ------------------------------------------------------------------ 1. versions
+    // ------------------------------------------------------------------ 1. 版本
 
     /**
-     * Creation is version 1 (a conversation created before the first edit already points at version
-     * 1, so that snapshot must exist) and every successful PATCH appends exactly one version.
+     * 新建即版本 1（第一次编辑之前创建的会话已经指向版本 1，所以这个快照必须存在），
+     * 此后每次成功的 PATCH 恰好追加一个版本。
      */
     @Test
     void everyUpdateCreatesNewVersion() throws Exception {
@@ -129,7 +128,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 "SELECT count(*) FROM agent_versions WHERE agent_id = ?", Integer.class, agentId));
     }
 
-    // ------------------------------------------------------------------ 2. cross-kb checks
+    // ------------------------------------------------------------------ 2. 跨知识库校验
 
     @Test
     void rejectsMixedEmbeddingModelsAcrossKbs() throws Exception {
@@ -148,7 +147,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 "SELECT count(*) FROM agents WHERE name LIKE 'agent10-a-%'", Integer.class),
                 "a rejected agent must not be inserted");
 
-        // a second knowledge base with the *same* embedding model is accepted
+        // 第二个知识库只要用<em>同一个</em>向量模型就可以通过
         long sameModelKb = createKb(firstEmbeddingModelId);
         long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(firstKb, sameModelKb),
                 Map.of(), "prompt");
@@ -156,7 +155,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 "SELECT embedding_model_id FROM agents WHERE id = ?", Long.class, agentId),
                 "the embedding model is derived from the knowledge bases, not sent by the client");
 
-        // a PATCH that would mix models is rejected and leaves the stored config untouched
+        // 会让两个模型混用的 PATCH 被拒绝，且已存配置保持不变
         String patch = patchBody(Map.of("kbIds", List.of(firstKb, secondKb)));
         mockMvc.perform(patch("/api/agents/" + agentId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
@@ -187,7 +186,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000));
 
-        // a node of the declared knowledge base is accepted
+        // 属于所声明知识库的节点可以通过
         long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId),
                 Map.of(String.valueOf(kbId), List.of(ownNode)), "prompt");
         String listed = mockMvc.perform(get("/api/agents/" + agentId)
@@ -197,7 +196,7 @@ class AgentConfigTest extends IntegrationTestBase {
         Map<String, List<Integer>> scope = JsonPath.read(listed, "$.data.nodeScope");
         assertEquals(List.of((int) ownNode), scope.get(String.valueOf(kbId)));
 
-        // a scope key that is not one of the agent's knowledge bases is rejected too
+        // 范围键不在 Agent 的知识库列表里同样被拒绝
         String strayScope = createBody("agent10-a-" + UUID.randomUUID(), List.of(kbId),
                 Map.of(String.valueOf(otherKbId), List.of(foreignNode)), "prompt");
         mockMvc.perform(post("/api/agents")
@@ -207,7 +206,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000));
 
-        // ... and so is a node id that does not exist at all
+        // 完全不存在的节点 id 也一样被拒绝
         String ghostScope = createBody("agent10-a-" + UUID.randomUUID(), List.of(kbId),
                 Map.of(String.valueOf(kbId), List.of(999_999_999L)), "prompt");
         mockMvc.perform(post("/api/agents")
@@ -218,7 +217,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(40000));
     }
 
-    // ------------------------------------------------------------------ 3. snapshot immutability
+    // ------------------------------------------------------------------ 3. 快照不可变
 
     @Test
     void versionSnapshotIsImmutable() throws Exception {
@@ -243,14 +242,14 @@ class AgentConfigTest extends IntegrationTestBase {
         assertEquals(List.of(3, 2, 1), JsonPath.read(listed, "$.data[*].version"));
         assertEquals("prompt v1", JsonPath.read(listed, "$.data[2].snapshot.systemPrompt"));
 
-        // the contract Task 11 consumes: a historical version still resolves to its own config
+        // 这正是 Task 11 依赖的契约：历史版本仍解析出它自己的那份配置
         assertEquals("prompt v1", agentService.resolveSnapshot(agentId, 1).systemPrompt());
         assertEquals("prompt v3", agentService.resolveSnapshot(agentId, 3).systemPrompt());
         assertEquals(3, agentService.resolveSnapshot(agentId, 3).maxRounds(),
                 "the snapshot carries the default maxRounds = 3");
     }
 
-    // ------------------------------------------------------------------ 4. validation ranges
+    // ------------------------------------------------------------------ 4. 数值范围校验
 
     @Test
     void rejectsInvalidConfigValues() throws Exception {
@@ -268,14 +267,14 @@ class AgentConfigTest extends IntegrationTestBase {
         assertCreateRejected(kbId, Map.of("chatModelId", firstEmbeddingModelId));
         assertCreateRejected(kbId, Map.of("kbIds", List.of(999_999_999L)));
 
-        // a knowledge base without an embedding model can never be retrieved from
+        // 没有向量模型的知识库根本无法被检索，因此不能挂到 Agent 上
         long noModelKb = jdbc.queryForObject(
                 "INSERT INTO knowledge_bases (name) VALUES (?) RETURNING id", Long.class,
                 "agent10-kb-" + UUID.randomUUID());
         assertCreateRejected(noModelKb, Map.of());
     }
 
-    // ------------------------------------------------------------------ 5. deletion guard
+    // ------------------------------------------------------------------ 5. 删除保护
 
     @Test
     void deleteIsBlockedWhileConversationsExist() throws Exception {
@@ -307,7 +306,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 "versions cascade with the agent");
     }
 
-    // ------------------------------------------------------------------ 6. duplicate names
+    // ------------------------------------------------------------------ 6. 重名
 
     @Test
     void duplicateAgentNameConflicts() throws Exception {
@@ -324,7 +323,7 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(40900));
     }
 
-    // ------------------------------------------------------------------ 7. permissions
+    // ------------------------------------------------------------------ 7. 权限
 
     @Test
     void userCanReadAgentsButCannotWriteThem() throws Exception {
@@ -362,11 +361,11 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40300));
 
-        // nothing above changed the agent
+        // 以上操作都没有改动 Agent 本身
         assertEquals(1, versions(agentId).size());
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private void assertCreateRejected(long kbId, Map<String, Object> overrides) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();

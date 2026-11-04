@@ -7,12 +7,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * A row of {@code messages}.
+ * {@code messages} 表的一行。
  *
- * <p>{@code content} is {@code null} while an assistant message is still {@code PENDING}.
- * {@code citations} is the exact list handed to the ANSWER prompt, so {@code [n]} in the answer
- * always indexes {@code citations[n-1]} — that is why the whole chunk is stored rather than only
- * its ids (a deleted document must not turn an old answer's reference into a dangling id).</p>
+ * <p>助手消息处于 {@code PENDING} 时 {@code content} 为 {@code null}。{@code citations} 就是当时交给
+ * ANSWER 提示词的那份列表，所以答案里的 {@code [n]} 永远索引到 {@code citations[n-1]}——这也是为什么存的是
+ * 片段全文而不只是 id：文档被删掉后，旧答案的引用不能变成一个悬空 id。</p>
  */
 public record Message(long id, long conversationId, String role, String content,
                       List<RetrievedChunk> citations, MessageStatus status, TokenUsage tokenUsage,

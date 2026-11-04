@@ -6,10 +6,10 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 /**
- * Step 1 of the upload flow: ask for a presigned PUT URL.
+ * 上传流程的第一步：申请预签名 PUT 地址。
  *
- * <p>{@code nodeId} is optional (a document may hang off the knowledge base root); {@code size} is
- * optional as well but, when present, is validated against the 50 MB limit.</p>
+ * <p>{@code nodeId} 可空（文档可以直接挂在知识库根上）；{@code size} 同样可空，但一旦提供就会按 50 MB
+ * 上限校验，避免客户端把明显超限的文件传上来才发现。</p>
  */
 public record PresignRequest(
         @NotNull(message = "must not be null")

@@ -16,33 +16,26 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Hybrid retrieval orchestration (design §11 "RETRIEVE"): per knowledge base a vector path and a
- * {@code pg_trgm} keyword path <em>per query text</em> — every ranked list is one
- * {@code (kbId, path, query)} triple, so at most {@code 2 × |kbIds| × |queries|} lists — all
- * fused globally with RRF (k=60) and capped at {@code finalTopK}. Keeping the lists separate is
- * what lets a chunk that several queries found accumulate one {@code 1/(k+rank)} contribution
- * per list inside {@link RrfFusion#fuse} (dedup and summation happen there, by {@code chunkId}).
- * The SQL lives in {@link RetrievalJdbcRepository}; this class validates the request and drives
- * the embedding gateway.
+ * 混合检索编排（设计 §11 的 RETRIEVE）：每个知识库跑一条向量路径和一条 {@code pg_trgm} 关键词路径，
+ * 且是<em>按每条查询文本</em>分别跑——每个有序列表对应一个 {@code (kbId, path, query)} 三元组，
+ * 最多 {@code 2 × |kbIds| × |queries|} 个列表——最后统一用 RRF（k=60）融合，并截断到 {@code finalTopK}。
+ * 之所以保持列表彼此独立，正是为了让「被多条查询命中的片段」能在 {@link RrfFusion#fuse} 中按列表各累加
+ * 一次 {@code 1/(k+rank)}（去重与求和都在那里按 {@code chunkId} 完成）。SQL 在
+ * {@link RetrievalJdbcRepository}，本类负责校验请求并驱动向量网关。
  *
- * <p>Binding rulings implemented here:</p>
+ * <p>在此落实的裁决：</p>
  * <ul>
- *   <li>R2 — any requested knowledge base at {@code reindex_status = 'REINDEXING'} rejects the
- *       whole retrieval with 409 {@code KB_REINDEXING}; a {@code FAILED} knowledge base stays
- *       retrievable (only {@code REINDEXING} blocks, per design §10);</li>
- *   <li>R6 — queries are embedded per knowledge base in a single batched {@code embed()} call
- *       using that KB's {@code embedding_model_id}; a KB without an embedding model only
- *       contributes its keyword path (logged at DEBUG); an empty query list never reaches the
- *       gateway;</li>
- *   <li>R7 — {@code kbIds} must be non-empty ({@code VALIDATION_FAILED}) and is de-duplicated;
- *       {@code perKbTopK} defaults to 20 and {@code finalTopK} to 8, both clamped to [1, 100]
- *       (non-positive values mean "use the default");</li>
- *   <li>R5 — the fusion itself is delegated to {@link RrfFusion}.</li>
+ *   <li>R2——只要有一个请求的知识库处于 {@code reindex_status = 'REINDEXING'}，整次检索就以 409
+ *       {@code KB_REINDEXING} 拒绝；{@code FAILED} 状态的知识库仍可检索（按设计 §10，只有重建中才拦）；</li>
+ *   <li>R6——查询按知识库分组，用该库的 {@code embedding_model_id} 一次性批量 {@code embed()}；
+ *       没有配置向量模型的知识库只贡献关键词路径（打 DEBUG 日志）；查询列表为空时根本不会调用网关；</li>
+ *   <li>R7——{@code kbIds} 必须非空（否则 {@code VALIDATION_FAILED}）并去重；{@code perKbTopK} 默认 20、
+ *       {@code finalTopK} 默认 8，均收敛到 [1, 100]（非正数表示「用默认值」）；</li>
+ *   <li>R5——融合本身委托给 {@link RrfFusion}。</li>
  * </ul>
  *
- * <p>Knowledge base ids that do not exist contribute nothing (they have no rows to search);
- * this class deliberately does not 404 for them — callers (the orchestration in Task 11) resolve
- * agent configuration against real KBs first.</p>
+ * <p>不存在的知识库 id 不会贡献任何结果（它没有任何行可查）；本类刻意不对其返回 404——调用方
+ * （Task 11 的编排）在检索之前就已按真实知识库解析过 Agent 配置。</p>
  */
 @Service
 public class RetrievalService {
@@ -62,6 +55,7 @@ public class RetrievalService {
         this.embeddingGateway = embeddingGateway;
     }
 
+    /** 按知识库分别跑向量与关键词路径，再用 RRF 全局融合。 */
     @Transactional(readOnly = true)
     public List<RetrievedChunk> retrieve(RetrievalQuery query) {
         List<Long> kbIds = validateAndDedupKbIds(query);
@@ -72,13 +66,12 @@ public class RetrievalService {
         for (Long kbId : kbIds) {
             RetrievalJdbcRepository.KbMeta meta = metaById.get(kbId);
             if (meta == null) {
-                // Silent skip is deliberate: agent kb config is validated when the Agent is saved
-                // (Task 10), and retrieval must not turn a stale id into a 500 — it just
-                // contributes nothing.
+                // 这里静默跳过是有意的：Agent 的知识库配置在保存时就已校验过（Task 10），
+                // 检索不该因为一个过期的 id 变成 500——它什么都不贡献即可。
                 log.debug("Knowledge base {} does not exist; skipping it in retrieval", kbId);
                 continue;
             }
-            // R2: a running reindex rejects retrieval outright; FAILED stays retrievable.
+            // R2：重建中直接拒绝检索；FAILED 状态仍然可检索。
             if ("REINDEXING".equals(meta.reindexStatus())) {
                 throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引");
             }
@@ -86,7 +79,7 @@ public class RetrievalService {
 
         List<String> queries = normalizeQueries(query.queries());
         if (queries.isEmpty()) {
-            // R6: nothing to embed, nothing to match — return without touching the gateway.
+            // R6：没有要向量化的内容，也就没有可匹配的东西，直接返回，不碰网关。
             return new ArrayList<>();
         }
 
@@ -100,8 +93,8 @@ public class RetrievalService {
             }
             List<Long> scope = effectiveScope(nodeScope.get(kbId));
 
-            // One keyword list per (KB, query): never merged across queries — a chunk ranked in
-            // several query lists must accumulate 1/(k+rank) per list inside RrfFusion.fuse.
+            // 每个 (知识库, 查询) 一个关键词列表，绝不跨查询合并——
+            // 只有保持独立，命中多条查询的片段才能在 RrfFusion.fuse 中按列表逐个累加 1/(k+rank)。
             for (String text : queries) {
                 List<RetrievedChunk> keywordList =
                         repository.keywordTopK(kbId, text, scope, perKbTopK);
@@ -110,7 +103,7 @@ public class RetrievalService {
                 }
             }
 
-            // Vector path — skipped when the KB has no embedding model (R6).
+            // 向量路径——知识库未配置向量模型时跳过（R6）。
             Long modelId = meta.embeddingModelId();
             if (modelId == null) {
                 log.debug("Knowledge base {} has no embedding model; skipping the vector path", kbId);
@@ -118,7 +111,7 @@ public class RetrievalService {
             }
             List<float[]> vectors = embeddingGateway.embed(modelId, queries);
             for (int i = 0; i < queries.size() && i < vectors.size(); i++) {
-                // One vector list per (KB, query), same no-merge rule as the keyword path.
+                // 每个 (知识库, 查询) 一个向量列表，与关键词路径同样不合并。
                 List<RetrievedChunk> vectorList = repository.vectorTopK(
                         kbId, toVectorText(vectors.get(i)), scope, perKbTopK);
                 if (!vectorList.isEmpty()) {
@@ -130,7 +123,7 @@ public class RetrievalService {
         return rrfFusion.fuse(rankedLists, finalTopK);
     }
 
-    // ------------------------------------------------------------------ request validation
+    // ------------------------------------------------------------------ 请求校验
 
     private static List<Long> validateAndDedupKbIds(RetrievalQuery query) {
         if (query.kbIds() == null || query.kbIds().isEmpty()) {
@@ -146,7 +139,7 @@ public class RetrievalService {
         return new ArrayList<>(deduped);
     }
 
-    /** Defaults for non-positive values, otherwise clamped to [1, MAX_TOP_K] (R7). */
+    /** 非正数取默认值，其余收敛到 [1, MAX_TOP_K]（裁决 R7）。 */
     private static int normalizeTopK(int value, int defaultValue) {
         if (value <= 0) {
             return defaultValue;
@@ -154,7 +147,7 @@ public class RetrievalService {
         return Math.min(value, MAX_TOP_K);
     }
 
-    /** Drops null/blank texts; an empty result short-circuits before any gateway call (R6). */
+    /** 丢弃空文本；结果为空时在调用网关之前就短路返回（R6）。 */
     private static List<String> normalizeQueries(List<String> queries) {
         if (queries == null) {
             return List.of();
@@ -168,17 +161,21 @@ public class RetrievalService {
         return cleaned;
     }
 
-    /** Missing key or empty list = whole KB (R4). */
+    /** 缺少该键或列表为空表示整库检索（R4）。 */
     private static List<Long> effectiveScope(List<Long> scope) {
         return scope == null || scope.isEmpty() ? List.of() : scope;
     }
 
-    // ------------------------------------------------------------------ pgvector text format
+    // ------------------------------------------------------------------ pgvector 文本格式
 
     /**
-     * Renders a query vector as pgvector text {@code [0.1,0.2,...]} for {@code ?::vector}
-     * (ruling R8). {@code %.6f} keeps plain decimal notation (no exponent) at a precision that
-     * is irrelevant for cosine ranking of {@code float4} stored vectors.
+     * 把查询向量渲染成 pgvector 文本 {@code [0.1,0.2,...]}，供 {@code ?::vector} 使用（裁决 R8）。
+     *
+     * <p>{@code %.6f} 保证输出始终是普通小数而非指数形式；这个精度对 {@code float4} 存储向量的余弦排序
+     * 没有实质影响，但避免了科学计数法导致解析失败。</p>
+     *
+     * @param vector 向量分量
+     * @return pgvector 文本形式
      */
     static String toVectorText(float[] vector) {
         StringBuilder sb = new StringBuilder("[");

@@ -31,40 +31,36 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Document upload registration, reads, retry and soft delete.
+ * 文档上传登记、查询、重试与软删除。
  *
- * <p>The upload is three steps: presign, client-side PUT, then create. Create stats the uploaded
- * object and checks its real size against the 50 MB limit (a replay of an already registered
- * {@code objectKey} skips both checks and returns the existing row, which makes a retried callback
- * safe). {@code ux_documents_object_key} (V2) backstops concurrent callbacks: the loser of the
- * unique-index race gets 23505 and returns the winner's row. The object key is
- * {@code kb/{kbId}/{uuid}/{sanitized filename}}; the uuid keeps the keys unique even for repeated
- * uploads of the same filename.</p>
+ * <p>上传分三步：预签名、客户端直传、再登记。登记时会 stat 上传对象并按真实大小复核 50 MB 上限；
+ * 若 {@code objectKey} 已登记过，则跳过这两项检查直接返回已有行，使重试的回调天然幂等。
+ * {@code ux_documents_object_key}（V2）是并发回调的兜底：唯一索引竞争的失败方会拿到 23505，
+ * 转而返回成功方的那一行。对象键为 {@code kb/{kbId}/{uuid}/{净化后的文件名}}，其中 uuid 保证同名文件
+ * 重复上传时键依然唯一。</p>
  *
- * <p>Writes are ADMIN-only at the controller. Reads and listing go through {@code JdbcTemplate} so
- * the status written by the background worker is always the one returned; a JPA {@code findById}
- * could serve a stale entity from the persistence context.</p>
+ * <p>写操作在控制器层限管理员。读取与列表统一走 {@code JdbcTemplate}，保证返回的一定是后台 worker 刚写入的
+ * 状态；用 JPA 的 {@code findById} 可能从一级缓存里取到过期实体。</p>
  *
- * <p>Deleting is a soft delete ({@code status = DELETED}) and a second delete answers 404, the same
- * as an unknown id, so the endpoint does not leak whether the row is still there. The MinIO object
- * and the {@code chunks} rows are removed asynchronously by the ingest worker.</p>
+ * <p>删除是软删除（{@code status = DELETED}），重复删除返回 404，与 id 不存在完全一致，
+ * 因此接口不会泄露该行是否还在。MinIO 对象与 {@code chunks} 行由入库 worker 异步清理。</p>
  */
 @Service
 public class DocumentService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentService.class);
 
-    /** Matches {@code spring.servlet.multipart.max-file-size} in {@code application.yml}. */
+    /** 与 {@code application.yml} 里的 {@code spring.servlet.multipart.max-file-size} 保持一致。 */
     static final long MAX_SIZE_BYTES = 50L * 1024 * 1024;
 
-    /** MinIO presign lifetime required by the spec. */
+    /** 规格要求的预签名有效期。 */
     static final Duration PRESIGN_TTL = Duration.ofMinutes(10);
 
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_FILENAME_LENGTH = 512;
     private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
 
-    /** Everything outside this set becomes {@code _}; it keeps keys safe for S3/MinIO and for URLs. */
+    /** 白名单之外的字符一律替换为 {@code _}，保证对象键在 S3/MinIO 与 URL 中都安全。 */
     private static final Pattern UNSAFE_FILENAME_CHARS = Pattern.compile("[^A-Za-z0-9._-]");
 
     private static final String COLUMNS = """
@@ -107,7 +103,7 @@ public class DocumentService {
         this.jdbc = jdbc;
     }
 
-    /** Creates the object key for this upload and returns a ten-minute presigned PUT URL. */
+    /** 生成本次上传的对象键，并返回有效期十分钟的预签名 PUT 地址。 */
     public PresignResponse presign(PresignRequest request) {
         Long kbId = requireKnowledgeBase(request.kbId());
         validateNodeBelongsToKb(kbId, request.nodeId());
@@ -120,9 +116,14 @@ public class DocumentService {
     }
 
     /**
-     * Registers an uploaded object. Idempotent on {@code objectKey}: an existing document is returned
-     * with {@code created = false} and no duplicate row is written. The MinIO existence check only
-     * runs on the insert path, so a replay succeeds even if the object was already consumed.
+     * 登记一个已上传的对象。
+     *
+     * <p>以 {@code objectKey} 幂等：已存在时返回原文档且 {@code created = false}，不会写出重复行。
+     * MinIO 的存在性检查只在插入路径上执行，因此即便对象已被消费，重放也能成功。</p>
+     *
+     * @param request 登记请求
+     * @param userId  上传者
+     * @return 文档行与「是否为新建」标记
      */
     public Creation create(CreateDocumentRequest request, Long userId) {
         Long kbId = requireKnowledgeBase(request.kbId());
@@ -152,12 +153,11 @@ public class DocumentService {
         document.setCreatedBy(userId);
         document.setStatus(DocumentStatus.PENDING.name());
         try {
-            // saveAndFlush commits in its own transaction before enqueue: the worker runs on another
-            // connection and must see the row.
+            // saveAndFlush 会在入队之前先提交自己的事务：worker 跑在另一条连接上，必须能看见这一行。
             document = documents.saveAndFlush(document);
         } catch (DataIntegrityViolationException e) {
-            // The unique index on object_key is the backstop for two concurrent callbacks: the loser
-            // waits for the winner to commit, then gets 23505 and must return the winner's row.
+            // object_key 上的唯一索引是并发回调的兜底：失败方会等成功方提交后拿到 23505，
+            // 然后改而返回成功方写入的那一行。
             if (!isUniqueViolation(e)) {
                 throw e;
             }
@@ -172,9 +172,9 @@ public class DocumentService {
     }
 
     /**
-     * Idempotent replay: the object was already registered, so return the existing row without
-     * re-checking MinIO (the object may already have been consumed). A soft-deleted row is a
-     * conflict instead of a silently invisible document.
+     * 幂等重放：对象已登记过，直接返回已有行，不再检查 MinIO（对象可能已被消费掉）。
+     *
+     * <p>若该行已被软删除，则报冲突，而不是变成一个「查不到但确实存在」的幽灵文档。</p>
      */
     private static Creation replay(Document existing) {
         if (DocumentStatus.DELETED.name().equals(existing.getStatus())) {
@@ -183,6 +183,7 @@ public class DocumentService {
         return new Creation(DocumentResponse.from(existing), false);
     }
 
+    /** 读取文档；不存在或已软删返回 404。 */
     public DocumentResponse get(Long documentId) {
         return jdbc.query("SELECT " + COLUMNS + " FROM documents WHERE id = ? AND status <> 'DELETED'",
                         ROW_MAPPER, documentId)
@@ -191,6 +192,7 @@ public class DocumentService {
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Document not found"));
     }
 
+    /** 分页列出知识库下的文档。 */
     public PageResponse<DocumentResponse> list(Long kbId, Long nodeId, int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int pageIndex = Math.max(page, 0);
@@ -221,14 +223,18 @@ public class DocumentService {
     }
 
     /**
-     * Pages the stored chunks of one document in document order.
+     * 按文档顺序分页返回已落库的片段。
      *
-     * <p>An unknown or soft-deleted document answers 404 through {@link #get}, like every other read:
-     * a deleted document has no chunks to show, and pretending it is an empty list would make a stale
-     * UI look healthy.</p>
+     * <p>不存在的或已软删的文档会和其它读接口一样经 {@link #get} 返回 404：已删除的文档确实没有片段可看，
+     * 若假装返回空列表，一个过期的界面反而会显得一切正常。</p>
+     *
+     * @param documentId 文档主键
+     * @param page       页码
+     * @param size       每页条数
+     * @return 片段分页数据
      */
     public PageResponse<ChunkResponse> listChunks(Long documentId, int page, int size) {
-        get(documentId); // 404 for an unknown or deleted document, same as every other read
+        get(documentId); // 与其它读接口一致：未知或已删除的文档都在这里抛 404
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int pageIndex = Math.max(page, 0);
 
@@ -252,10 +258,9 @@ public class DocumentService {
         return PageResponse.of(items, pageIndex, pageSize, totalCount);
     }
 
-    /** Re-queues a {@code FAILED} document. Any other status is a conflict. */
+    /** 重新入队一个 {@code FAILED} 文档；其它状态一律视为冲突。 */
     public DocumentResponse retry(Long documentId) {
-        // Read through JDBC: a JPA findById could serve a stale entity after the worker's
-        // out-of-band compare-and-set writes.
+        // 走 JDBC 读取：worker 在别处做过比较并设置写入之后，JPA 的 findById 可能返回一级缓存里的旧实体。
         DocumentResponse current = get(documentId);
         if (!DocumentStatus.FAILED.name().equals(current.status())) {
             throw new AppException(ErrorCode.CONFLICT, "Only FAILED documents can be retried");
@@ -263,13 +268,13 @@ public class DocumentService {
         if (!worker.transition(documentId, DocumentStatus.FAILED, DocumentStatus.PENDING, null)) {
             throw new AppException(ErrorCode.CONFLICT, "Document status changed concurrently");
         }
-        // Read the PENDING snapshot before the worker can move it again.
+        // 在 worker 再次推进状态之前，先把 PENDING 这一刻的快照读出来。
         DocumentResponse pending = get(documentId);
         worker.enqueue(documentId);
         return pending;
     }
 
-    /** Soft-deletes the document and schedules removal of its object and chunks. */
+    /** 软删除文档，并安排异步清理其对象与片段。 */
     public void delete(Long documentId) {
         int updated = jdbc.update("""
                 UPDATE documents SET status = 'DELETED', updated_at = now()
@@ -290,8 +295,7 @@ public class DocumentService {
         if (!knowledgeBases.existsById(kbId)) {
             throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found");
         }
-        // Ruling R2 (Task 7): uploads are rejected while the knowledge base rebuilds its index.
-        // Retrieval gets the same gate in Task 8.
+        // 裁决 R2（Task 7）：知识库重建索引期间拒绝上传；Task 8 的检索也走同一道闸门。
         String reindexStatus = jdbc.queryForObject(
                 "SELECT reindex_status FROM knowledge_bases WHERE id = ?", String.class, kbId);
         if ("REINDEXING".equals(reindexStatus)) {
@@ -388,9 +392,14 @@ public class DocumentService {
     }
 
     /**
-     * Translates only PostgreSQL unique violations (SQLSTATE 23505). FK/CHECK failures are real
-     * server errors and must not be mistaken for an idempotent replay. The pgjdbc driver is
-     * runtime-scoped, so the cause chain is inspected through {@link SQLException#getSQLState()}.
+     * 只把 PostgreSQL 的唯一约束冲突（SQLSTATE 23505）翻译成幂等重放。
+     *
+     * <p>外键与 CHECK 失败属于真正的服务端错误，绝不能被误当成「已存在的重复请求」而悄悄返回旧数据。
+     * pgjdbc 是 runtime 作用域依赖，因此这里沿异常原因链用 {@link SQLException#getSQLState()} 判断，
+     * 而不是引用驱动特有的异常类型。</p>
+     *
+     * @param e 捕获到的数据完整性异常
+     * @return 是唯一约束冲突返回 {@code true}
      */
     private static boolean isUniqueViolation(Throwable exception) {
         for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
@@ -408,7 +417,7 @@ public class DocumentService {
         return false;
     }
 
-    /** Whether {@link #create} inserted a row or returned an existing one (200 vs 201). */
+    /** {@link #create} 是新建了一行还是返回了已有行，用来区分 201 与 200。 */
     public record Creation(DocumentResponse document, boolean created) {
     }
 }

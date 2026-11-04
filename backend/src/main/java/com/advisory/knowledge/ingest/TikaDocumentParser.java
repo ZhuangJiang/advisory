@@ -25,18 +25,16 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * {@link DocumentParser} backed by Apache Tika.
+ * 基于 Apache Tika 的 {@link DocumentParser} 实现。
  *
- * <p>Markdown and plain text are decoded as UTF-8 and kept verbatim, so their headings survive.
- * Everything else goes through Tika with a {@link ToXMLContentHandler}: Tika's XHTML output keeps
- * heading levels, lists, tables and paragraphs, which are then converted to Markdown-ish text (ATX
- * headings, {@code - } list items, pipe tables). That conversion is what makes structure-aware
- * chunking work for .docx/.pdf/.html files.</p>
+ * <p>Markdown 与纯文本按 UTF-8 解码后原样保留，标题因此不会丢失。其他格式统一交给 Tika 并用
+ * {@link ToXMLContentHandler} 取 XHTML：Tika 的 XHTML 会保留标题层级、列表、表格与段落，随后再转换成
+ * 接近 Markdown 的文本（ATX 标题、{@code - } 列表项、管道表格）。正是这一步转换，让结构化切片对
+ * .docx/.pdf/.html 也能生效。</p>
  *
- * <p>Extraction is bounded: at most 20 MB of input bytes are read and the resulting text is capped
- * at 5 million characters. Parse failures and empty results surface as
- * {@link ErrorCode#VALIDATION_FAILED} with the user-facing message {@code "无法解析该文件"}. File
- * contents are never logged.</p>
+ * <p>解析有硬边界：最多读取 20 MB 输入字节，产出文本上限 500 万字符。解析失败或结果为空时以
+ * {@link ErrorCode#VALIDATION_FAILED} 抛出，对用户展示统一文案 {@code "无法解析该文件"}。
+ * 任何情况下都不打印文件内容。</p>
  */
 public class TikaDocumentParser implements DocumentParser {
 
@@ -52,6 +50,7 @@ public class TikaDocumentParser implements DocumentParser {
             (byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0, (byte) 0xA1, (byte) 0xB1, 0x1A, (byte) 0xE1
     };
 
+    /** 解析上传文档；内容永不进日志。 */
     @Override
     public ParsedDocument parse(InputStream in, String filename) {
         if (in == null) {
@@ -75,7 +74,7 @@ public class TikaDocumentParser implements DocumentParser {
         } catch (AppException e) {
             throw e;
         } catch (Exception e) {
-            // Deliberately no content in the message or the log: documents may be sensitive.
+            // 消息与日志里都刻意不带内容：文档可能包含敏感信息。
             throw new AppException(ErrorCode.VALIDATION_FAILED, PARSE_ERROR_MESSAGE);
         }
     }
@@ -108,9 +107,13 @@ public class TikaDocumentParser implements DocumentParser {
     }
 
     /**
-     * Rejects a file whose bytes do not match the format its extension promises. Without this a
-     * garbage {@code .docx} is happily parsed by Tika's plain-text fallback and silently indexes
-     * unrelated bytes.
+     * 拒绝字节内容与扩展名声明的格式不符的文件。
+     *
+     * <p>没有这道校验，一个内容乱码的 {@code .docx} 会被 Tika 的纯文本兜底逻辑「成功」解析，
+     * 然后把一堆毫不相干的字节静默索引进知识库。</p>
+     *
+     * @param in       文件内容
+     * @param filename 文件名，用于取扩展名
      */
     private static void validateSignature(byte[] bytes, String extension) {
         if (bytes.length == 0) {
@@ -161,7 +164,7 @@ public class TikaDocumentParser implements DocumentParser {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    /** Removes a single UTF-8 BOM so a leading {@code \uFEFF} cannot break ATX heading detection. */
+    /** 去掉单个 UTF-8 BOM，避免行首的 {@code \uFEFF} 让 ATX 标题无法被识别。 */
     static String stripLeadingBom(String text) {
         return text.startsWith("\uFEFF") ? text.substring(1) : text;
     }
@@ -179,7 +182,7 @@ public class TikaDocumentParser implements DocumentParser {
         return text.substring(0, end);
     }
 
-    // ---------------------------------------------------------------- XHTML -> Markdown
+    // ---------------------------------------------------------------- XHTML 转 Markdown
 
     private static final class XhtmlToMarkdown {
 
@@ -246,7 +249,7 @@ public class TikaDocumentParser implements DocumentParser {
                 }
                 case "table" -> renderTable(node, out);
                 case "head", "script", "style", "meta", "link" -> {
-                    // Metadata and scripts contribute no body text.
+                    // 元数据与脚本不产生正文，直接跳过。
                 }
                 default -> renderChildren(node, out);
             }

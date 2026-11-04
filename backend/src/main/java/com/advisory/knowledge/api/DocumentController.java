@@ -23,11 +23,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Document endpoints.
+ * 文档相关接口。
  *
- * <p>Reads (get/list) are open to any authenticated user so a USER can follow ingestion progress;
- * presign, create, retry and delete are ADMIN-only because a USER may only read knowledge bases.
- * Create answers 201 for a new row and 200 when the same {@code objectKey} is replayed.</p>
+ * <p>读接口（详情、列表）对所有已登录用户开放，普通用户因此能看到入库进度；预签名、登记、重试与删除
+ * 仅限管理员——普通用户对知识库只读。登记接口新建时返回 201，同一个 {@code objectKey} 重放时返回 200。</p>
  */
 @RestController
 @RequestMapping("/api/documents")
@@ -39,12 +38,14 @@ public class DocumentController {
         this.service = service;
     }
 
+    /** 生成预签名 PUT 地址，客户端据此直传 MinIO。 */
     @PostMapping("/presign")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<PresignResponse> presign(@Valid @RequestBody PresignRequest body) {
         return ApiResponse.ok(service.presign(body));
     }
 
+    /** 登记已上传的对象；同一 objectKey 重放返回已有文档。 */
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<DocumentResponse>> create(@Valid @RequestBody CreateDocumentRequest body,
@@ -54,6 +55,7 @@ public class DocumentController {
         return ResponseEntity.status(status).body(ApiResponse.ok(creation.document()));
     }
 
+    /** 分页列出知识库下的文档及其入库状态。 */
     @GetMapping
     public ApiResponse<PageResponse<DocumentResponse>> list(
             @RequestParam(name = "kbId", required = false) Long kbId,
@@ -63,12 +65,13 @@ public class DocumentController {
         return ApiResponse.ok(service.list(kbId, nodeId, page, size));
     }
 
+    /** 文档详情；不存在或已删除返回 404。 */
     @GetMapping("/{id}")
     public ApiResponse<DocumentResponse> get(@PathVariable Long id) {
         return ApiResponse.ok(service.get(id));
     }
 
-    /** Stored chunks of one document, in {@code seq} order — what the UI's chunk drawer shows. */
+    /** 某个文档已落库的片段，按 {@code seq} 排序——即界面上的片段抽屉所展示的内容。 */
     @GetMapping("/{id}/chunks")
     public ApiResponse<PageResponse<ChunkResponse>> chunks(
             @PathVariable Long id,
@@ -77,12 +80,14 @@ public class DocumentController {
         return ApiResponse.ok(service.listChunks(id, page, size));
     }
 
+    /** 把 FAILED 文档重新入队。 */
     @PostMapping("/{id}/retry")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<DocumentResponse> retry(@PathVariable Long id) {
         return ApiResponse.ok(service.retry(id));
     }
 
+    /** 软删除文档并异步清理对象与片段。 */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(@PathVariable Long id) {

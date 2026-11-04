@@ -15,23 +15,19 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The production {@link ChatModelGateway}: Spring AI {@code ChatModel} built per {@code models} row.
+ * 生产环境使用的 {@link ChatModelGateway}：按 {@code models} 行构造 Spring AI {@code ChatModel}。
  *
- * <p>Both entry points are blocking; the orchestrator already wraps every call in a 60s step budget
- * on its own thread, so this class adds no retry logic of its own (unlike the embedding path, a
- * retry here would silently eat the step budget).</p>
+ * <p>两个入口都是阻塞调用；编排器已经把每次调用放在自带 60 秒预算的线程里，因此本类不额外做重试
+ * （与入库链路不同，这里的重试会悄悄吃掉整步预算，反而把可控的超时变成不可控）。</p>
  *
- * <p>Structured output uses Spring AI's {@link BeanOutputConverter}: the format instructions are
- * appended to the user prompt and the raw answer is converted into {@code type}. Anything that does
- * not convert — prose, a code fence, truncated JSON — becomes an {@link AppException}, which the
- * orchestrator treats as "evidence insufficient" and degrades instead of failing the conversation
- * (spec §11).</p>
+ * <p>结构化输出借助 Spring AI 的 {@link BeanOutputConverter}：格式说明追加到用户提示词末尾，再把原始回答
+ * 转换成 {@code type}。凡是转换失败的——纯散文、被代码围栏包住、JSON 被截断——都抛 {@link AppException}，
+ * 编排器据此判定「证据不足」并降级作答，而不是让整条会话失败（spec §11）。</p>
  *
- * <p>Provider failures (unreachable host, 401, unknown model) are wrapped into
- * {@link ErrorCode#INTERNAL_ERROR}; the conversation then ends as {@code FAILED} with the provider
- * message, never a 500 without context. Usage is not aggregated yet: {@code ChatModelGateway} has no
- * usage channel, so the persisted {@code token_usage} stays zero — recorded in the task report as a
- * known gap rather than silently guessed.</p>
+ * <p>提供商侧失败（主机不可达、401、模型不存在）统一包成 {@link ErrorCode#INTERNAL_ERROR}，会话以
+ * {@code FAILED} 结束并带上提供商的原始信息，避免只留一个没有上下文的 500。token 用量尚未统计：
+ * {@code ChatModelGateway} 没有用量通道，落库的 {@code token_usage} 恒为 0——这一点作为已知缺口记录在
+ * 任务报告里，而不是随便估一个数字。</p>
  */
 public class SpringAiChatModelGateway implements ChatModelGateway {
 
@@ -75,7 +71,7 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
             }
             return value;
         } catch (RuntimeException e) {
-            // The answer text is deliberately not logged: it may echo retrieved document content.
+            // 有意不打印答案正文：它可能包含检索到的文档原文，属于敏感内容。
             String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             throw new AppException(ErrorCode.VALIDATION_FAILED,
                     "模型输出无法解析为 " + type.getSimpleName() + ": " + truncate(reason));

@@ -3,18 +3,15 @@ package com.advisory.chat.orchestration;
 import java.math.BigDecimal;
 
 /**
- * The model access an orchestration run needs.
+ * 一次编排运行所需的模型访问能力。
  *
- * <p>Kept as an interface so the state machine can be tested with a scripted fake (no network, no
- * Spring AI context) and so the production implementation can build one client per
- * {@code models} row — the provider/model is chosen by an agent, which auto-configuration cannot
- * express. {@link #chatStructured} must throw {@link com.advisory.common.error.AppException} when
- * the model answers something that does not parse into {@code type}; the orchestrator degrades
- * instead of failing the conversation.</p>
+ * <p>做成接口有两个目的：状态机可以用脚本化的假实现测试（不联网、不启动 Spring AI 上下文）；生产实现则能
+ * 按 {@code models} 行为每个 Agent 构造独立客户端——提供商与模型由 Agent 决定，自动配置表达不了。
+ * {@link #chatStructured} 在模型输出无法解析成 {@code type} 时必须抛
+ * {@link com.advisory.common.error.AppException}，编排器据此降级，而不是让会话整体失败。</p>
  *
- * <p>The {@code temperature} overloads default to the three-argument forms so a fake only has to
- * implement one pair of methods; the production gateway overrides them and applies the agent's
- * temperature as the request default.</p>
+ * <p>{@code temperature} 重载默认委托给三参数版本，假实现因此只需实现一对方法；生产网关覆写它们，
+ * 把 Agent 的温度作为请求默认值。</p>
  */
 public interface ChatModelGateway {
 

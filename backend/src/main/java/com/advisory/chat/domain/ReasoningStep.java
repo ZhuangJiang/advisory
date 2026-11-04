@@ -5,12 +5,12 @@ import com.advisory.chat.orchestration.Phase;
 import java.time.Instant;
 
 /**
- * A row of {@code reasoning_steps}.
+ * {@code reasoning_steps} 表的一行。
  *
- * <p>The table has no {@code summary} column, so the orchestrator's {@link Phase} step is stored as
- * {@code payload = {"summary": ..., "detail": <the step's JSON as a string>}}. That keeps the
- * human-readable line and the machine-readable payload in one place without a migration, and
- * {@code detail} stays a string so a payload that is not valid JSON can never fail the insert.</p>
+ * <p>表里没有 {@code summary} 列，因此编排器写步骤时把摘要塞进
+ * {@code payload = {"summary": ..., "detail": <步骤 JSON 的字符串>}}：这样不必加一次迁移，就能让
+ * 人读的一行摘要与机器读的载荷待在同一处；{@code detail} 保持字符串类型，则保证即使内容不是合法 JSON
+ * 也不会让插入失败。</p>
  */
 public record ReasoningStep(long id, long messageId, int round, Phase phase, String summary,
                             String payload, long latencyMs, Instant createdAt) {

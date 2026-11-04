@@ -3,10 +3,10 @@ package com.advisory.common.error;
 import org.springframework.http.HttpStatus;
 
 /**
- * Business error codes returned in the response envelope's {@code code} field.
+ * 响应信封 {@code code} 字段使用的业务错误码。
  *
- * <p>The numeric code is the contract with the frontend; {@link #getHttpStatus()} only drives
- * the HTTP status line so clients and proxies can reason about failures generically.</p>
+ * <p>数字本身是与前端约定的契约，不可随意变更；{@link #getHttpStatus()} 只用于决定 HTTP 状态行，
+ * 以便客户端与代理能按通用规则处理失败。新增错误码时按「HTTP 状态 × 100 + 序号」扩展。</p>
  */
 public enum ErrorCode {
 
@@ -30,18 +30,31 @@ public enum ErrorCode {
 
     INTERNAL_ERROR(50000, HttpStatus.INTERNAL_SERVER_ERROR);
 
+    /** 与前端约定的业务错误码。 */
     private final int code;
+
+    /** 该错误对应的 HTTP 状态。 */
     private final HttpStatus httpStatus;
 
+    /**
+     * @param code       业务错误码
+     * @param httpStatus 对应的 HTTP 状态
+     */
     ErrorCode(int code, HttpStatus httpStatus) {
         this.code = code;
         this.httpStatus = httpStatus;
     }
 
+    /**
+     * @return 业务错误码
+     */
     public int getCode() {
         return code;
     }
 
+    /**
+     * @return 对应的 HTTP 状态
+     */
     public HttpStatus getHttpStatus() {
         return httpStatus;
     }

@@ -30,14 +30,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Task 11: the four-phase orchestration state machine (PLAN → RETRIEVE → REFLECT → ANSWER).
+ * Task 11：四阶段编排状态机（PLAN → RETRIEVE → REFLECT → ANSWER）。
  *
- * <p>Plain JUnit with a scripted {@link ChatModelGateway} and a mocked {@link RetrievalService}:
- * the state machine has no database, no Spring context and no network, so every branch (sufficient,
- * never sufficient, malformed structured output, empty evidence, step timeout) is deterministic.
- * The orchestrator is deliberately not a {@code @Service} yet — the production gateway arrives with
- * the conversation layer (Task 12), and an un-wired bean would break the shared application
- * context of the integration tests.</p>
+ * <p>纯 JUnit，用脚本化的 {@link ChatModelGateway} 与 mock 掉的 {@link RetrievalService}：
+ * 状态机本身不碰数据库、不启 Spring 上下文、不联网，因此每个分支（证据充分、始终不充分、
+ * 结构化输出不可解析、证据为空、单步超时）都能确定性复现。</p>
+ *
+ * <p>编排器当时刻意没标 {@code @Service}：生产网关要到会话层（Task 12）才出现，提前注册一个依赖缺失的
+ * bean 会让集成测试共享的应用上下文直接启动失败。</p>
  */
 class ChatOrchestratorTest {
 
@@ -55,7 +55,7 @@ class ChatOrchestratorTest {
         when(retrieval.retrieve(any())).thenReturn(List.of(chunk(1)));
     }
 
-    // ------------------------------------------------------------------ 1. sufficient on round 1
+    // ------------------------------------------------------------------ 1. 第一轮即判定证据充分
 
     @Test
     void stopsWhenReflectSaysSufficient() {
@@ -73,7 +73,7 @@ class ChatOrchestratorTest {
         verify(retrieval, times(1)).retrieve(any());
         assertEquals(1, gateway.planCalls());
 
-        // the sink saw every phase start/end exactly once plus the deltas and the citations
+        // 接收器应恰好看到每个阶段的一次开始与一次结束，外加增量文本与引用列表
         assertEquals(List.of("start:PLAN", "end:PLAN", "delta:PLAN",
                         "start:RETRIEVE", "end:RETRIEVE",
                         "start:REFLECT", "end:REFLECT", "delta:REFLECT",
@@ -82,7 +82,7 @@ class ChatOrchestratorTest {
         assertEquals(1, sink.citationBatches.size());
     }
 
-    // ------------------------------------------------------------------ 2. never sufficient
+    // ------------------------------------------------------------------ 2. 始终判定不充分
 
     @Test
     void runsToMaxRoundsWhenNeverSufficient() {
@@ -105,7 +105,7 @@ class ChatOrchestratorTest {
         assertEquals(3, gateway.reflectCalls());
         assertEquals(1, gateway.answerCalls());
 
-        // each round retrieves with the queries the previous REFLECT proposed
+        // 每一轮都用上一轮 REFLECT 提出的语句去检索
         ArgumentCaptor<RetrievalQuery> captor = ArgumentCaptor.forClass(RetrievalQuery.class);
         verify(retrieval, times(3)).retrieve(captor.capture());
         List<RetrievalQuery> queries = captor.getAllValues();
@@ -114,7 +114,7 @@ class ChatOrchestratorTest {
         assertEquals(List.of("next-2"), queries.get(2).queries());
     }
 
-    // ------------------------------------------------------------------ 3. malformed output
+    // ------------------------------------------------------------------ 3. 结构化输出不可解析
 
     @Test
     void illegalJsonDegradesInsteadOfThrowing() {
@@ -131,14 +131,14 @@ class ChatOrchestratorTest {
                 result.steps().stream().map(ReasoningStepData::phase).toList());
         assertTrue(result.steps().get(2).summary().contains("失败"));
         assertTrue(result.steps().get(4).summary().contains("失败"));
-        // a failed REFLECT proposes nothing, so the round re-uses the previous queries
+        // REFLECT 失败时提不出新语句，于是这一轮沿用上一轮的语句
         ArgumentCaptor<RetrievalQuery> captor = ArgumentCaptor.forClass(RetrievalQuery.class);
         verify(retrieval, times(2)).retrieve(captor.capture());
         assertEquals(List.of("q1"), captor.getAllValues().get(0).queries());
         assertEquals(List.of("q1"), captor.getAllValues().get(1).queries());
     }
 
-    // ------------------------------------------------------------------ 4. prompts and query shape
+    // ------------------------------------------------------------------ 4. 提示词与检索请求的形状
 
     @Test
     void answerPromptContainsNumberedCitations() {
@@ -150,19 +150,19 @@ class ChatOrchestratorTest {
 
         orchestrator.run(agent(3, 30), "检索是怎么做的？", sink);
 
-        // the ANSWER system prompt pins the citation rules
+        // ANSWER 的系统提示词必须钉死引用规则
         String system = gateway.answerSystemPrompts.get(0);
         assertTrue(system.contains("[1]"), "the answer prompt must show the [n] citation format");
         assertTrue(system.contains("知识库中没有找到"), "the answer prompt must forbid answering without evidence");
 
-        // the user prompt numbers every snippet so [n] in the answer is unambiguous
+        // 用户提示词给每个片段编号，答案里的 [n] 才不会指向不明
         String user = gateway.answerUserPrompts.get(0);
         assertTrue(user.contains("[1] handbook.pdf"));
         assertTrue(user.contains("[2] faq.md"));
         assertTrue(user.contains("向量检索使用余弦相似度。"));
         assertTrue(user.contains("检索是怎么做的？"));
 
-        // the retrieval request carries the agent's scope and topK, and the fused cap is 8
+        // 检索请求要带上 Agent 的范围与 topK，融合后的上限固定为 8
         ArgumentCaptor<RetrievalQuery> captor = ArgumentCaptor.forClass(RetrievalQuery.class);
         verify(retrieval).retrieve(captor.capture());
         RetrievalQuery query = captor.getValue();
@@ -174,9 +174,9 @@ class ChatOrchestratorTest {
     }
 
     /**
-     * Task 13 fix: {@code agents.system_prompt} used to be stored, versioned and editable but never
-     * sent to the model — the agent's whole customisation was a no-op. It now leads the ANSWER
-     * instructions; PLAN and REFLECT keep their fixed prompts because they must emit parsable JSON.
+     * Task 13 的修复：{@code agents.system_prompt} 过去只是存着、能版本化、能编辑，却从未发给模型——
+     * 整个 Agent 自定义形同虚设。现在它会被拼到 ANSWER 指令之前；PLAN 与 REFLECT 仍用固定提示词，
+     * 因为那两个阶段必须产出可解析的 JSON。
      */
     @Test
     void agentSystemPromptLeadsTheAnswerInstructions() {
@@ -194,7 +194,7 @@ class ChatOrchestratorTest {
                 "PLAN must keep its fixed JSON-only prompt");
     }
 
-    // ------------------------------------------------------------------ 5. no evidence
+    // ------------------------------------------------------------------ 5. 完全没有证据
 
     @Test
     void emptyEvidenceSkipsTheAnswerCall() {
@@ -210,7 +210,7 @@ class ChatOrchestratorTest {
         assertTrue(result.steps().stream().anyMatch(step -> step.phase() == Phase.ANSWER));
     }
 
-    // ------------------------------------------------------------------ 6. step timeout
+    // ------------------------------------------------------------------ 6. 单步超时
 
     @Test
     void stepTimeoutEntersAnswerImmediately() {
@@ -229,7 +229,7 @@ class ChatOrchestratorTest {
         verify(retrieval, never()).retrieve(any());
     }
 
-    // ------------------------------------------------------------------ fixtures
+    // ------------------------------------------------------------------ 测试夹具
 
     private static AgentSnapshot agent(int maxRounds, int topK) {
         return new AgentSnapshot("agent", "system prompt", 1L, 2L, List.of(10L),
@@ -242,8 +242,8 @@ class ChatOrchestratorTest {
     }
 
     /**
-     * Scripted gateway: each queue holds values or {@link RuntimeException}s to throw; an empty
-     * queue answers with a benign default so a test only scripts what it asserts on.
+     * 脚本化网关：每个队列里放返回值，或放待抛出的 {@link RuntimeException}；队列为空时返回一个无害的默认值，
+     * 这样测试只需为它真正断言的部分写脚本。
      */
     private static final class FakeGateway implements ChatModelGateway {
 

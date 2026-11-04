@@ -6,9 +6,10 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 /**
- * Body of {@code POST /api/providers/{id}/models}. {@code EMBEDDING} requires
- * {@code dimension == app.embedding.dimension} (otherwise 40010); {@code CHAT} must omit
- * {@code dimension}.
+ * {@code POST /api/providers/{id}/models} 的请求体。
+ *
+ * <p>{@code EMBEDDING} 必须满足 {@code dimension == app.embedding.dimension}（否则返回 40010）；
+ * {@code CHAT} 必须不填 {@code dimension}，因为对话模型没有维度概念。</p>
  */
 public record CreateModelRequest(
         @NotBlank(message = "modelName must not be blank") @Size(max = 255) String modelName,

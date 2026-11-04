@@ -4,16 +4,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * One retrieval request over one or more knowledge bases.
+ * 一次检索请求，可跨多个知识库。
  *
- * @param kbIds      knowledge bases to search; must be non-empty (repeated ids are collapsed)
- * @param nodeScope  per-KB node scope {@code {kbId: [nodeIds]}}; a missing key or an empty list
- *                   means the whole knowledge base, a non-empty list restricts to the subtrees of
- *                   those nodes (ltree), ids belonging to other knowledge bases or dangling ids
- *                   are ignored
- * @param queries    query texts; each knowledge base embeds them with its own embedding model
- * @param perKbTopK  per path (vector / keyword) result size per knowledge base, default 20, clamped to [1, 100]
- * @param finalTopK  RRF-fused result cap, default 8, clamped to [1, 100]
+ * @param kbIds     待检索的知识库，必须非空（重复 id 会被折叠）
+ * @param nodeScope 按知识库划分的节点范围 {@code {kbId: [nodeIds]}}：缺少该键或列表为空表示整库检索，
+ *                  非空列表则限定在这些节点的子树内（ltree）；属于其他知识库的 id 与悬空 id 一律忽略
+ * @param queries   查询文本；每个知识库用自己的向量模型对其向量化
+ * @param perKbTopK 每个知识库、每条路径（向量/关键词）返回的条数，默认 20，越界会收敛到 [1, 100]
+ * @param finalTopK RRF 融合后的结果上限，默认 8，越界会收敛到 [1, 100]
  */
 public record RetrievalQuery(List<Long> kbIds,
                              Map<Long, List<Long>> nodeScope,

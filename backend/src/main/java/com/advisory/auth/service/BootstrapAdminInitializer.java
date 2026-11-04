@@ -12,9 +12,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /**
- * Seeds a single admin account on first boot (when no ADMIN exists) so the platform is usable out
- * of the box. The account is created with {@code must_change_password = true}; an existing admin is
- * never overwritten.
+ * 首次启动时创建一个管理员账号，使平台开箱可用。
+ *
+ * <p>仅当库中不存在任何 {@code ADMIN} 时才创建，已有管理员绝不会被覆盖——否则升级重启会把线上密码
+ * 重置回配置值。新账号带 {@code must_change_password = true}，首次登录必须先改密。</p>
  */
 @Component
 public class BootstrapAdminInitializer implements ApplicationRunner {
@@ -26,6 +27,12 @@ public class BootstrapAdminInitializer implements ApplicationRunner {
     private final String username;
     private final String password;
 
+    /**
+     * @param userRepository  用户仓储
+     * @param passwordEncoder 密码加密
+     * @param username        引导账号的用户名，来自配置
+     * @param password        引导账号的初始密码，来自配置
+     */
     public BootstrapAdminInitializer(UserRepository userRepository,
                                      PasswordEncoder passwordEncoder,
                                      @Value("${app.bootstrap-admin.username}") String username,
@@ -36,6 +43,11 @@ public class BootstrapAdminInitializer implements ApplicationRunner {
         this.password = password;
     }
 
+    /**
+     * 应用启动后执行：无管理员则建一个，并提醒使用默认密码的风险。
+     *
+     * @param args 启动参数，未使用
+     */
     @Override
     public void run(ApplicationArguments args) {
         if (userRepository.countByRole(UserRole.ADMIN) > 0) {

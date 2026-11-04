@@ -21,17 +21,14 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Beans of the answer path: the model client factory, the orchestrator and the two thread pools it
- * needs.
+ * 作答链路的 bean 装配：模型客户端工厂、编排器，以及编排器需要的两个线程池。
  *
- * <p>The Spring AI gateway is only registered when {@code app.chat.gateway} is unset (or
- * {@code real}); {@code IntegrationTestBase} sets it to {@code stub} so integration tests get the
- * deterministic gateway from {@code com.advisory.support.TestChatModelGatewayConfig} instead and
- * never touch a provider. The property is deliberately absent from {@code application.yml}: in
- * production it must never be set.</p>
+ * <p>只有 {@code app.chat.gateway} 未设置（或为 {@code real}）时才注册 Spring AI 网关；
+ * {@code IntegrationTestBase} 把它设为 {@code stub}，集成测试于是改用
+ * {@code com.advisory.support.TestChatModelGatewayConfig} 提供的确定性网关，完全不碰真实提供商。
+ * 该配置项刻意不写进 {@code application.yml}：生产环境永远不该设置它。</p>
  *
- * <p>Timeouts mirror spec §11 (60s per step, 180s per run) and are configurable in milliseconds so a
- * test can shrink them without waiting.</p>
+ * <p>超时与 spec §11 一致（单步 60 秒、整体 180 秒），以毫秒为单位可配，测试才能把它改小而不必真的等。</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class ChatConfig {
@@ -44,10 +41,12 @@ public class ChatConfig {
     @Bean
     @ConditionalOnProperty(prefix = "app.chat", name = "gateway", havingValue = "real",
             matchIfMissing = true)
+    /** 生产网关：仅在 app.chat.gateway 未设置或为 real 时注册。 */
     public ChatModelGateway chatModelGateway(ChatClientFactory clientFactory) {
         return new SpringAiChatModelGateway(clientFactory);
     }
 
+    /** 装配编排器并传入生产网关。 */
     @Bean(destroyMethod = "shutdown")
     public ChatOrchestrator chatOrchestrator(RetrievalService retrievalService,
                                              ChatModelGateway gateway,
@@ -59,16 +58,18 @@ public class ChatConfig {
     }
 
     /**
-     * Runs the orchestrations. Bounded on purpose: one replica serving a handful of internal users,
-     * and an unbounded pool would let a burst of questions exhaust the connection pool before the
-     * 409 guard ever applies (it is per conversation, not global).
+     * 执行编排任务的线程池。
+     *
+     * <p>刻意有界：单副本、服务少量内部用户，无界队列会让一波提问先把数据库连接池耗尽，
+     * 而 409 忙等保护是「按会话」而非全局的，拦不住这种压力。</p>
      */
+    /** 有界的编排线程池。 */
     @Bean(name = "chatWorkerExecutor", destroyMethod = "shutdownNow")
     public ExecutorService chatWorkerExecutor() {
         return Executors.newFixedThreadPool(4, namedDaemonThreads("chat-worker-"));
     }
 
-    /** One thread is enough: it only writes 15s pings to the open emitters. */
+    /** 单线程足够：它只负责每 15 秒往未关闭的 emitter 上写一次心跳。 */
     @Bean(name = "chatHeartbeatScheduler", destroyMethod = "shutdownNow")
     public ScheduledExecutorService chatHeartbeatScheduler() {
         return Executors.newSingleThreadScheduledExecutor(namedDaemonThreads("chat-heartbeat-"));

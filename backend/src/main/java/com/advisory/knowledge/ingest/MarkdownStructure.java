@@ -6,8 +6,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Small Markdown helpers shared by the parser and the chunker: ATX heading grammar, fenced code
- * block detection and heading-section extraction.
+ * 解析器与切片器共用的 Markdown 小工具：ATX 标题语法、围栏代码块识别，以及标题章节抽取。
+ *
+ * <p>抽成独立工具类是为了让「什么算标题」「什么算代码块」只有一处定义，否则解析与切片迟早会给出不同答案。</p>
  */
 final class MarkdownStructure {
 
@@ -26,8 +27,10 @@ final class MarkdownStructure {
     }
 
     /**
-     * Number of fence markers (backticks or tildes) when the line opens a fenced code block, or
-     * {@code 0} otherwise.
+     * 判断该行是否开启了一个围栏代码块。
+     *
+     * @param line 待判断的行
+     * @return 开启时返回围栏标记（反引号或波浪号）的个数，否则返回 {@code 0}
      */
     static int fenceLength(String strippedLeading) {
         if (strippedLeading.isEmpty()) {

@@ -31,22 +31,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Provider CRUD, local model CRUD and the remote import.
+ * 提供商增删改查、本地模型增删改查以及远端模型导入。
  *
- * <p>Listing is one {@code JdbcTemplate} query (per-row {@code modelCount} plus the cipher for
- * masking) — the mask is computed by decrypting and keeping only the first four characters, so the
- * ciphertext and the full key never leave this class. Deleting a provider or a model first checks
- * the {@code knowledge_bases.embedding_model_id} / {@code agents.chat_model_id} /
- * {@code agents.embedding_model_id} references and rejects with {@code MODEL_IN_USE}; the model
- * cascade itself is the database's {@code ON DELETE CASCADE} on
- * {@code models.provider_id}.</p>
+ * <p>列表用一条 {@code JdbcTemplate} 查询取回（每行带 {@code modelCount} 与用于掩码的密文），掩码由解密后
+ * 取前四位得到，因此密文与完整密钥都不会离开本类。删除提供商或模型前会先检查
+ * {@code knowledge_bases.embedding_model_id}、{@code agents.chat_model_id}、
+ * {@code agents.embedding_model_id} 的引用，被引用则返回 {@code MODEL_IN_USE}；
+ * 模型随提供商一起删除这件事本身由数据库的 {@code models.provider_id ON DELETE CASCADE} 完成。</p>
  *
- * <p>Imports are idempotent on {@code (provider_id, model_name)}: the whole request is validated
- * first (an invalid row inserts nothing), the remote listing is probed before anything is written,
- * then <em>existing rows are left untouched</em> — an import never overwrites an operator-edited
- * {@code dimension}, {@code params} or {@code enabled} — and only unknown names are inserted. Since
- * {@code V1__init.sql} has no unique index on that pair, the check-then-insert runs inside one
- * transaction.</p>
+ * <p>导入以 {@code (provider_id, model_name)} 为幂等键：先整体校验请求（任一行非法则一行都不插入），
+ * 再探测远端列表，最后<em>已存在的行保持原样</em>——导入绝不覆盖运维手工调整过的 {@code dimension}、
+ * {@code params} 或 {@code enabled}——只插入未知的模型名。由于 {@code V1__init.sql} 对该组合没有唯一索引，
+ * 「先查后插」必须跑在同一个事务里。</p>
  */
 @Service
 public class ProviderService {
@@ -76,7 +72,7 @@ public class ProviderService {
             ORDER BY p.id
             """;
 
-    /** References of a provider's models by knowledge bases and agents (either column). */
+    /** 统计某提供商下所有模型被知识库与 Agent 引用的次数（对话列与向量列都算）。 */
     private static final String PROVIDER_REFERENCE_SQL = """
             SELECT (SELECT count(*) FROM knowledge_bases
                     WHERE embedding_model_id IN (SELECT id FROM models WHERE provider_id = ?))
@@ -85,7 +81,7 @@ public class ProviderService {
                        OR embedding_model_id IN (SELECT id FROM models WHERE provider_id = ?))
             """;
 
-    /** References of one model by knowledge bases and agents (either column). */
+    /** 统计单个模型被知识库与 Agent 引用的次数（对话列与向量列都算）。 */
     private static final String MODEL_REFERENCE_SQL = """
             SELECT (SELECT count(*) FROM knowledge_bases WHERE embedding_model_id = ?)
                  + (SELECT count(*) FROM agents
@@ -113,13 +109,19 @@ public class ProviderService {
         this.expectedDimension = expectedDimension;
     }
 
-    // ------------------------------------------------------------------ providers
+    // ------------------------------------------------------------------ 提供商
 
     /**
-     * One page of providers ordered by id, with model count and masked key. Page is 0-based; size
-     * defaults to 20 and is capped at 100 (the global list-endpoint contract). Any authenticated
-     * user may call it.
+     * 按主键升序分页列出提供商，附带模型数量与掩码后的密钥。
+     *
+     * <p>页码从 0 开始，页长默认 20、上限 100（与全局列表接口约定一致）；任意已登录用户都可调用，
+     * 因为 Agent 配置页需要用这份列表做下拉选项。</p>
+     *
+     * @param page 页码
+     * @param size 每页条数
+     * @return 提供商分页数据
      */
+    /** 分页列出提供商，掩码由解密后取前四位得到。 */
     @Transactional(readOnly = true)
     public PageResponse<ProviderResponse> list(int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -148,6 +150,7 @@ public class ProviderService {
                 mask(id, rs.getString("api_key_cipher")));
     }
 
+    /** 新建提供商，密钥加密后落库。 */
     @Transactional
     public ProviderResponse create(CreateProviderRequest body) {
         ModelProvider provider = new ModelProvider(
@@ -157,6 +160,7 @@ public class ProviderService {
         return toResponse(provider);
     }
 
+    /** 局部更新提供商，按 apiKey 的三种语义处理密钥。 */
     @Transactional
     public ProviderResponse update(Long id, PatchProviderRequest body) {
         ModelProvider provider = find(id);
@@ -173,7 +177,7 @@ public class ProviderService {
             provider.setEnabled(body.enabled());
         }
         if (body.apiKey() != null) {
-            // "" clears the key; anything else is re-encrypted; absent leaves it untouched.
+            // 传空串表示清空密钥；传其他值表示重新加密写入；字段缺省表示保持不变。
             provider.setApiKeyCipher(body.apiKey().isEmpty()
                     ? null
                     : cryptoService.encrypt(body.apiKey()));
@@ -182,6 +186,7 @@ public class ProviderService {
         return toResponse(provider);
     }
 
+    /** 删除提供商；其下模型由 ON DELETE CASCADE 连带删除。 */
     @Transactional
     public void delete(Long id) {
         ModelProvider provider = find(id);
@@ -191,32 +196,34 @@ public class ProviderService {
             throw new AppException(ErrorCode.MODEL_IN_USE,
                     "Provider has models referenced by a knowledge base or an agent");
         }
-        // models go with it through the ON DELETE CASCADE on models.provider_id
+        // 其下模型由 models.provider_id 上的 ON DELETE CASCADE 连带删除
         providers.delete(provider);
     }
 
-    // ------------------------------------------------------------------ probing
+    // ------------------------------------------------------------------ 探测
 
-    /** {@code POST /api/providers/{id}/test}: live probe of the provider (optional model name). */
+    /** {@code POST /api/providers/{id}/test}：对提供商做实时探测（可指定模型名）。 */
     public ProbeResult test(Long providerId, String modelName) {
         return probe.test(find(providerId), modelName);
     }
 
-    /** {@code GET /api/providers/{id}/models?remote=true}: probe outcome with the live names. */
+    /** {@code GET /api/providers/{id}/models?remote=true}：探测结果连同远端模型名一起返回。 */
     public ProbeResult remoteModels(Long providerId) {
         return probe.test(find(providerId), null);
     }
 
-    // ------------------------------------------------------------------ local models
+    // ------------------------------------------------------------------ 本地模型
 
+    /** 列出某提供商的本地模型。 */
     @Transactional(readOnly = true)
     public List<ModelResponse> listModels(Long providerId) {
-        find(providerId); // 404 for unknown providers
+        find(providerId); // 提供商不存在时由这里抛 404
         return models.findByProviderIdOrderByIdAsc(providerId).stream()
                 .map(ModelResponse::from)
                 .toList();
     }
 
+    /** 登记模型并校验维度规则。 */
     @Transactional
     public ModelResponse createModel(Long providerId, CreateModelRequest body) {
         find(providerId);
@@ -228,6 +235,7 @@ public class ProviderService {
         return ModelResponse.from(model);
     }
 
+    /** 更新模型；能力不可改，维度按库中能力重新校验。 */
     @Transactional
     public ModelResponse updateModel(Long id, PatchModelRequest body) {
         ModelConfig model = findModel(id);
@@ -237,7 +245,7 @@ public class ProviderService {
             model.setModelName(modelName);
         }
         if (body.dimension() != null) {
-            // the 1024 rule follows the row's capability, not a request-declared one
+            // 维度规则以库中该行的 capability 为准，而不是请求里声明的那个
             validateDimension(model.getCapability(), body.dimension());
             model.setDimension(body.dimension());
         }
@@ -248,6 +256,7 @@ public class ProviderService {
         return ModelResponse.from(model);
     }
 
+    /** 删除模型；仍被知识库或 Agent 引用时返回 409。 */
     @Transactional
     public void deleteModel(Long id) {
         ModelConfig model = findModel(id);
@@ -259,14 +268,19 @@ public class ProviderService {
         models.delete(model);
     }
 
-    // ------------------------------------------------------------------ import
+    // ------------------------------------------------------------------ 导入
 
     /**
-     * {@code POST /api/providers/{id}/models/import} — probe first, validate everything, then insert
-     * only unknown names. On probe failure: 404 for {@code MODEL_NOT_FOUND}, otherwise 400; the
-     * probe's own error code is carried in the message. Any invalid row aborts the whole import
-     * (nothing inserted). Returns the resulting local list.
+     * {@code POST /api/providers/{id}/models/import}：先探测、再整体校验，最后只插入未知的模型名。
+     *
+     * <p>探测失败时按错误码分流：{@code MODEL_NOT_FOUND} 返回 404，其余返回 400，并在消息里带上探测得到的
+     * 错误码。任一行非法即整体放弃，一行也不写入。返回导入后的本地模型列表。</p>
+     *
+     * @param providerId 提供商主键
+     * @param request    待导入的模型规格列表
+     * @return 导入后的本地模型列表
      */
+    /** 校验请求 → 探测远端 → 仅插入未知模型名。 */
     @Transactional
     public List<ModelResponse> importModels(Long providerId, ImportModelsRequest body) {
         ModelProvider provider = find(providerId);
@@ -280,8 +294,7 @@ public class ProviderService {
                     "Provider probe failed: " + probeResult.errorCode());
         }
 
-        // Validate every requested row before touching the table: a single bad embedding
-        // dimension must leave the table exactly as it was.
+        // 先校验全部请求行再动表：只要有一行的向量维度不合法，表必须保持原样，不能留下半截导入。
         Map<String, ImportModelSpec> byName = new LinkedHashMap<>();
         List<ImportModelSpec> specs = body.models() == null ? List.of() : body.models();
         for (ImportModelSpec spec : specs) {
@@ -294,9 +307,8 @@ public class ProviderService {
         }
 
         for (Map.Entry<String, ImportModelSpec> entry : byName.entrySet()) {
-            // No unique index on (provider_id, model_name): check-then-insert inside this
-            // transaction. Existing rows are left unchanged (choice stated in the task report);
-            // only unknown names are inserted.
+            // (provider_id, model_name) 上没有唯一索引，只能在本事务内「先查后插」。
+            // 已存在的行保持原样（任务报告里已说明这一取舍），只插入未知的模型名。
             if (!models.findByProviderIdAndModelName(providerId, entry.getKey()).isEmpty()) {
                 continue;
             }
@@ -310,12 +322,15 @@ public class ProviderService {
                 .toList();
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     /**
-     * First four characters of the decrypted key plus {@code ****}; {@code null} when there is no
-     * key or it cannot be decrypted (logged without any key material — a broken cipher must never
-     * fail the listing).
+     * 掩码：解密后取前四位再加 {@code ****}。
+     *
+     * <p>无密钥或解不开时返回 {@code null}（日志里不含密钥材料）——一条坏密文不该让整个列表接口失败。</p>
+     *
+     * @param cipher 库中的密文
+     * @return 掩码后的密钥，或 {@code null}
      */
     private String mask(long providerId, String apiKeyCipher) {
         if (apiKeyCipher == null || apiKeyCipher.isBlank()) {
@@ -347,7 +362,7 @@ public class ProviderService {
                 mask(provider.getId(), provider.getApiKeyCipher()));
     }
 
-    /** The single gate for the 1024 rule: EMBEDDING must equal the configured dimension. */
+    /** 维度规则的唯一校验点：向量模型的维度必须等于配置的维度。 */
     private void validateDimension(ModelCapability capability, Integer dimension) {
         if (capability == ModelCapability.EMBEDDING) {
             if (dimension == null || dimension != expectedDimension) {
@@ -362,8 +377,8 @@ public class ProviderService {
     }
 
     /**
-     * The pair has no unique index in the schema, so duplicates are rejected by a query — always
-     * called inside the write transaction that then inserts (check-then-insert).
+     * 该组合在库中没有唯一索引，只能靠查询来判重——必须在随后的写入事务内调用（先查后插），
+     * 否则并发下两个请求会同时通过检查。
      */
     private void assertNotDuplicate(Long providerId, String modelName, Long excludingModelId) {
         List<ModelConfig> existing = models.findByProviderIdAndModelName(providerId, modelName);

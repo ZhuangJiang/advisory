@@ -5,7 +5,11 @@ import com.advisory.provider.domain.ModelConfig;
 
 import java.time.Instant;
 
-/** Local {@code models} row payload ({@code params} is the raw JSON string of the jsonb column). */
+/**
+ * 本地 {@code models} 行的返回体。
+ *
+ * <p>{@code params} 是 jsonb 列的原始 JSON 字符串，直接透传以便前端按需解析。</p>
+ */
 public record ModelResponse(
         Long id,
         Long providerId,

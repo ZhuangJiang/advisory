@@ -16,29 +16,48 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Stateless JWT security: CSRF disabled, no session, and every request except the auth entry
- * points and the health check must be authenticated. Method security is enabled for
- * {@code @PreAuthorize}. Filter-chain 401/403 responses are written as the API envelope by the
- * dedicated entry point / denied handler.
+ * 无状态 JWT 安全配置：关闭 CSRF、不建会话，除认证入口与健康检查外的请求都必须已认证；
+ * 同时开启方法级安全以支持 {@code @PreAuthorize}。过滤器链内的 401/403 由专用的入口点与拒绝处理器
+ * 写成统一的 API 信封。
  */
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * 密码哈希器，全平台统一使用 BCrypt。
+     *
+     * @return BCrypt 编码器
+     */
+    /** BCrypt 密码编码器。 */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * 声明 JWT 过滤器 bean，供安全链引用。
+     *
+     * @param jwtService   令牌解析服务
+     * @param objectMapper 用于写出错误信封
+     * @return 过滤器实例
+     */
+    /** 声明 JWT 过滤器 bean，供安全链引用。 */
     @Bean
     public JwtAuthFilter jwtAuthFilter(JwtService jwtService, ObjectMapper objectMapper) {
         return new JwtAuthFilter(jwtService, objectMapper);
     }
 
     /**
-     * The JWT filter runs only inside the security chain; keep it out of the servlet container's
-     * own filter registration so it is not invoked twice per request.
+     * 关闭 Servlet 容器的自动注册，让 JWT 过滤器只在安全链里执行一次。
+     *
+     * <p>Spring Boot 会把容器中所有 {@code Filter} bean 自动挂到根过滤链上，不显式禁用就会与
+     * 安全链各执行一次，造成重复解析令牌。</p>
+     *
+     * @param jwtAuthFilter 过滤器
+     * @return 已禁用的注册对象
      */
+    /** 禁用 Servlet 容器的自动注册，避免过滤器执行两次。 */
     @Bean
     public FilterRegistrationBean<JwtAuthFilter> jwtAuthFilterRegistration(JwtAuthFilter jwtAuthFilter) {
         FilterRegistrationBean<JwtAuthFilter> registration = new FilterRegistrationBean<>(jwtAuthFilter);
@@ -46,6 +65,16 @@ public class SecurityConfig {
         return registration;
     }
 
+    /**
+     * 安全过滤链：无状态、禁用 CSRF，认证入口与健康检查放行，其余请求需认证。
+     *
+     * @param http          安全构建器
+     * @param jwtAuthFilter JWT 过滤器
+     * @param objectMapper  用于写出错误信封
+     * @return 构建好的过滤链
+     * @throws Exception 构建失败时抛出
+     */
+    /** 无状态安全链：放行认证入口与健康检查，其余需认证。 */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtAuthFilter jwtAuthFilter,
@@ -54,12 +83,10 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // An SseEmitter completes through an ASYNC dispatch, where the JWT filter does
-                        // not run again — re-authorizing there denies the *finished* response and
-                        // Tomcat cannot even write the error (the response is committed). ERROR is
-                        // permitted for the same reason: an error page must never need a re-check.
-                        // Both dispatches are internal continuations of a request that was already
-                        // authorized when it arrived.
+                        // SseEmitter 结束时走 ASYNC 派发，此时 JWT 过滤器不会再执行；若在这里重新鉴权，
+                        // 被判为匿名后连错误都写不出去（响应已提交），客户端只会看到连接被 500 掐断。
+                        // ERROR 派发放行的原因相同：错误页不应再需要一次鉴权。两者都是「请求到达时已鉴权」
+                        // 的内部延续，放行不会放宽外部访问。
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/auth/logout",
                                 "/actuator/health").permitAll()

@@ -20,18 +20,16 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * Thin wrapper around the single MinIO bucket.
+ * 单个 MinIO 存储桶的薄封装。
  *
- * <p>Uploads never pass through the application: clients PUT directly to a presigned URL. That URL
- * is signed by a second client built on the <em>public</em> endpoint (see {@code MinioConfig}),
- * because a SigV4 signature covers the host: a URL signed for {@code minio:9000} cannot be used by a
- * browser. The signature also covers the query string only, so callers must not add signed headers
- * (for example {@code Content-Type}) to the PUT. MinIO's maximum presign lifetime is seven days; a
- * shorter TTL is clamped to at least one second.</p>
+ * <p>上传不经过应用：客户端直接 PUT 到预签名地址。该地址由基于<em>公网</em>端点的第二个客户端签发
+ * （见 {@code MinioConfig}），因为 SigV4 签名覆盖了 host——为 {@code minio:9000} 签出的地址，浏览器用不了。
+ * 签名同样覆盖查询串，所以调用方不能给 PUT 追加任何参与签名的头（例如 {@code Content-Type}）。
+ * MinIO 预签名最长七天，传入更短的 TTL 会被夹到至少一秒。</p>
  *
- * <p>SDK failures are rethrown as {@link IllegalStateException}: they are infrastructure problems
- * and surface as {@code INTERNAL_ERROR}, never as client validation errors. {@link #stat(String)} is
- * the one exception: a missing object is a normal answer ({@code Optional.empty()}).</p>
+ * <p>SDK 失败统一包成 {@link IllegalStateException}：这些属于基础设施问题，最终表现为
+ * {@code INTERNAL_ERROR}，绝不能被当成客户端的参数错误。{@link #stat(String)} 是唯一例外——
+ * 对象不存在是一个正常答案（{@code Optional.empty()}）。</p>
  */
 @Service
 public class StorageService {
@@ -50,10 +48,12 @@ public class StorageService {
         this.bucket = bucket;
     }
 
+    /** 生成上传用的预签名地址，由公网客户端签名。 */
     public String presignPut(String objectKey, Duration ttl) {
         return presign(objectKey, ttl, Method.PUT);
     }
 
+    /** 生成下载用的预签名地址。 */
     public String presignGet(String objectKey, Duration ttl) {
         return presign(objectKey, ttl, Method.GET);
     }
@@ -72,6 +72,7 @@ public class StorageService {
         }
     }
 
+    /** 读取对象字节流，调用方负责关闭。 */
     public InputStream getObject(String objectKey) {
         try {
             return minioClient.getObject(GetObjectArgs.builder()
@@ -83,6 +84,7 @@ public class StorageService {
         }
     }
 
+    /** 写入文本对象，用于保存解析产物。 */
     public void putText(String objectKey, String text) {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         try {
@@ -97,6 +99,7 @@ public class StorageService {
         }
     }
 
+    /** 删除对象；对象本就不存在时视为成功。 */
     public void remove(String objectKey) {
         try {
             minioClient.removeObject(RemoveObjectArgs.builder()
@@ -109,8 +112,11 @@ public class StorageService {
     }
 
     /**
-     * Stats the object and returns its stored size. A missing object (or bucket) is a normal answer
-     * ({@code Optional.empty()}); real infrastructure failures are rethrown.
+     * 查询对象并返回其存储大小。对象（或桶）不存在属于正常答案（{@code Optional.empty()}），
+     * 真正的基础设施故障照常抛出。
+     *
+     * @param objectKey 对象键
+     * @return 对象元数据，不存在时为空
      */
     public Optional<ObjectStat> stat(String objectKey) {
         try {
@@ -130,7 +136,7 @@ public class StorageService {
         }
     }
 
-    /** Stored object metadata the upload flow needs. */
+    /** 上传流程所需的已存对象元数据。 */
     public record ObjectStat(long size) {
     }
 }

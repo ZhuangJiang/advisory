@@ -9,13 +9,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC access for {@code conversations}.
+ * {@code conversations} 的 JDBC 访问层。
  *
- * <p>{@code agent_name} is joined on every read: the conversation list is the only place the UI
- * needs it, and doing it here avoids an N+1 lookup in the service. Reads are always filtered by
- * {@code user_id} unless the caller is an administrator — the service passes {@code null} for
- * "no filter" and the SQL branches on it, so a forgotten filter cannot leak another user's
- * threads.</p>
+ * <p>每次读取都顺带关联出 {@code agent_name}：会话列表是唯一需要它的地方，放在这里可以避免服务层再逐个查一次。
+ * 除管理员外，读取一律按 {@code user_id} 过滤——服务层用 {@code null} 表示「不过滤」，SQL 依此分支，
+ * 这样即便某处忘了传过滤条件，也只会多返回而不是泄露他人会话。</p>
  */
 @Repository
 public class ConversationRepository {
@@ -41,6 +39,7 @@ public class ConversationRepository {
         this.jdbc = jdbc;
     }
 
+    /** 新建会话并锁定 Agent 版本。 */
     public long insert(long agentId, int agentVersion, long userId, String title) {
         return jdbc.queryForObject("""
                 INSERT INTO conversations (agent_id, agent_version, user_id, title)
@@ -48,13 +47,14 @@ public class ConversationRepository {
                 """, Long.class, agentId, agentVersion, userId, title);
     }
 
+    /** 按主键读取会话，关联出 Agent 名称。 */
     public Optional<Conversation> findById(long id) {
         return jdbc.query("""
                 SELECT %s FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE c.id = ?
                 """.formatted(COLUMNS), rowMapper, id).stream().findFirst();
     }
 
-    /** {@code userId == null} means "every user" (administrator); otherwise strictly that user. */
+    /** {@code userId} 为 {@code null} 表示「所有用户」（管理员），否则严格限定为该用户。 */
     public List<Conversation> findPage(Long userId, int limit, int offset) {
         String sql = """
                 SELECT %s FROM conversations c JOIN agents a ON a.id = c.agent_id
@@ -65,6 +65,7 @@ public class ConversationRepository {
         return jdbc.query(sql, rowMapper, userId, userId, limit, offset);
     }
 
+    /** 统计会话数，供分页使用。 */
     public long count(Long userId) {
         Long total = jdbc.queryForObject("""
                 SELECT count(*) FROM conversations
@@ -73,7 +74,7 @@ public class ConversationRepository {
         return total == null ? 0 : total;
     }
 
-    /** Bumps {@code updated_at} once a question completes, so the list sorts by activity usage. */
+    /** 问题完成后刷新 {@code updated_at}，使列表能按最近活跃排序。 */
     public void touch(long id) {
         jdbc.update("UPDATE conversations SET updated_at = now() WHERE id = ?", id);
     }

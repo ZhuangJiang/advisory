@@ -11,17 +11,15 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Read-only JDBC queries behind the administrator audit page.
+ * 管理员审计页背后的只读 JDBC 查询。
  *
- * <p>Every filter is nullable and expressed as {@code CAST(? AS ...) IS NULL OR ...}: one statement
- * serves all sixteen combinations of {@code userId / agentId / from / to}, and — more importantly —
- * a filter that the service forgets to pass degrades to "no filter" instead of silently returning
- * the wrong rows. The conversation count and newest message time are correlated subqueries because
- * there is at most a few hundred conversations per install (spec §8) and a grouped join would need
- * two more indexes for no measurable gain.</p>
+ * <p>每个筛选条件都可空，统一写成 {@code CAST(? AS ...) IS NULL OR ...}：一条语句就能覆盖
+ * {@code userId / agentId / from / to} 的全部十六种组合；更重要的是，服务层漏传某个参数时会退化为
+ * 「不筛选」，而不是悄悄返回一批错误的数据。会话数与最后消息时间用相关子查询实现——单套部署最多几百个会话
+ * （spec §8），改成聚合 join 还要多建两个索引，收益无法测量。</p>
  *
- * <p>Dates filter on {@code conversations.created_at} (when the thread was opened), not on the last
- * message: the audit page is about "which threads were started in this period".</p>
+ * <p>时间范围按 {@code conversations.created_at}（会话创建时间）过滤，而不是最后一条消息的时间：
+ * 这个页面回答的是「这段时间里新开了哪些会话」。</p>
  */
 @Repository
 public class AuditRepository {
@@ -63,6 +61,7 @@ public class AuditRepository {
         this.jdbc = jdbc;
     }
 
+    /** 分页查询会话，四个筛选条件均可为空。 */
     public List<AuditConversationRow> findPage(Long userId, Long agentId, Instant from,
                                                Instant toExclusive, int limit, int offset) {
         Object[] filters = filters(userId, agentId, from, toExclusive);
@@ -74,17 +73,21 @@ public class AuditRepository {
                 rowMapper, args);
     }
 
+    /** 统计满足条件的会话数。 */
     public long count(Long userId, Long agentId, Instant from, Instant toExclusive) {
         Long total = jdbc.queryForObject("SELECT count(*) FROM conversations c\n" + WHERE,
                 Long.class, filters(userId, agentId, from, toExclusive));
         return total == null ? 0 : total;
     }
 
+    /** 读取单条会话头信息。 */
     public Optional<AuditConversationRow> findRow(long id) {
         return jdbc.query(COLUMNS + " WHERE c.id = ?", rowMapper, id).stream().findFirst();
     }
 
-    /** Used for the {@code adminAudit} log line: an id alone is not an audit trail. */
+    /**
+     * 供 {@code adminAudit} 日志行使用：只记一个 id 算不上审计线索，必须能落到具体用户。
+     */
     public Optional<String> findUsername(long userId) {
         return jdbc.queryForList("SELECT username FROM users WHERE id = ?", String.class, userId)
                 .stream().findFirst();

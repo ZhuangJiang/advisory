@@ -3,10 +3,10 @@ package com.advisory.knowledge.ingest;
 import java.util.List;
 
 /**
- * Result of parsing an uploaded document.
+ * 文档解析的结果。
  *
- * @param markdown normalized Markdown-ish text; headings are preserved as ATX headings
- * @param sections heading sections in document order
+ * @param markdown 归一化后的、接近 Markdown 的文本，标题统一保留为 ATX 形式
+ * @param sections 按文档顺序排列的标题章节
  */
 public record ParsedDocument(String markdown, List<ParsedSection> sections) {
 

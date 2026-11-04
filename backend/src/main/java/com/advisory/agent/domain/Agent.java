@@ -6,11 +6,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A row of {@code agents} — the current configuration of an agent plus its version counter.
+ * {@code agents} 表的一行：Agent 的当前配置及其版本计数。
  *
- * <p>Built from a direct JDBC read (see {@code AgentRepository}); the live row and the snapshot at
- * {@code currentVersion} are written in the same transaction, so {@link #toSnapshot()} and the
- * stored version row always describe the same configuration.</p>
+ * <p>由 JDBC 直接读取（见 {@code AgentRepository}）。当前行与 {@code currentVersion} 对应的快照在同一个
+ * 事务里写入，因此 {@link #toSnapshot()} 与落库的版本行始终描述同一份配置，不会出现「行是新的、快照是旧的」。</p>
  */
 public record Agent(
         long id,

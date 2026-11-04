@@ -2,6 +2,10 @@ package com.advisory.provider.api.dto;
 
 import java.util.List;
 
-/** Body of {@code POST /api/providers/{id}/models/import}: the selected remote models to import. */
+/**
+ * {@code POST /api/providers/{id}/models/import} 的请求体：待导入的远端模型列表。
+ *
+ * @param models 选中的模型及其用途
+ */
 public record ImportModelsRequest(List<ImportModelSpec> models) {
 }

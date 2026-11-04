@@ -21,19 +21,17 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Knowledge base lifecycle, listing and reindexing.
+ * 知识库的创建、列表、更新与重建索引。
  *
- * <p>Listing is done with {@code JdbcTemplate} so the per-row {@code documentCount} is resolved by a
- * {@code LEFT JOIN LATERAL} in a single query; the {@code documents} table has no JPA entity yet.
- * Deletion rejects knowledge bases that are still referenced by an {@code agents} row (also no entity
- * yet) or that are mid-reindex.</p>
+ * <p>列表用 {@code JdbcTemplate} 实现，每行的 {@code documentCount} 由 {@code LEFT JOIN LATERAL} 在一条 SQL 里
+ * 算出（{@code documents} 表目前没有 JPA 实体）。删除时会拒绝两类知识库：仍被 {@code agents} 行引用的，
+ * 以及正在重建索引的。</p>
  *
- * <p>{@link #reindex(Long)} follows ruling R6: a CAS on {@code reindex_status} marks the knowledge
- * base {@code REINDEXING} before the background task is handed to the worker's dedicated single
- * thread executor; the task resets every non-{@code DELETED} document to {@code PENDING} and drives
- * it through the ingest pipeline synchronously, then settles the status {@code READY}/{@code
- * FAILED} in a {@code finally} so the knowledge base can never stay bricked at {@code REINDEXING}.
- * It runs on the worker's shared idle counter, so tests can {@code awaitIdle} the whole reindex.</p>
+ * <p>{@link #reindex(Long)} 按裁决 R6 执行：先用 CAS 把 {@code reindex_status} 置为 {@code REINDEXING}，
+ * 再把后台任务交给 worker 专用的单线程执行器；任务把所有非 {@code DELETED} 文档重置为 {@code PENDING}
+ * 并同步跑完入库流水线，最后在 {@code finally} 里把状态收敛为 {@code READY}/{@code FAILED}，
+ * 保证知识库绝不会永远卡在 {@code REINDEXING}。任务计入 worker 的公共空闲计数器，测试因此可以
+ * {@code awaitIdle} 等整个重建结束。</p>
  */
 @Service
 public class KnowledgeBaseService {
@@ -44,8 +42,7 @@ public class KnowledgeBaseService {
     private static final int MAX_PAGE_SIZE = 100;
 
     /**
-     * Shared {@code SELECT} for the list and the single-row read, so the document count (which must
-     * exclude soft-deleted rows) is computed identically in both places.
+     * 列表与单行读取共用的 {@code SELECT}，确保两处的文档计数（必须排除软删除行）算法完全一致。
      */
     private static final String BASE_SQL = """
             SELECT kb.id,
@@ -93,6 +90,7 @@ public class KnowledgeBaseService {
         this.worker = worker;
     }
 
+    /** 新建知识库。 */
     @Transactional
     public KnowledgeBaseResponse create(CreateKnowledgeBaseRequest body, Long createdBy) {
         String name = validateName(body.name(), MAX_NAME_LENGTH);
@@ -105,11 +103,12 @@ public class KnowledgeBaseService {
         return KnowledgeBaseResponse.from(kb);
     }
 
+    /** 局部更新；重建期间禁止改向量模型与切片配置。 */
     @Transactional
     public KnowledgeBaseResponse update(Long id, UpdateKnowledgeBaseRequest body) {
         KnowledgeBase kb = find(id);
-        // Same guard as delete: mutating embedding_model_id or chunk_config mid-reindex would
-        // change the config the running rebuild is reading, leaving chunks from two configs.
+        // 与删除同样的防护：重建过程中改动 embedding_model_id 或 chunk_config，
+        // 会让正在运行的重建读到一半新一半旧的配置，最终产出两套参数切出来的片段。
         if ("REINDEXING".equals(kb.getReindexStatus())) {
             throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
         }
@@ -129,14 +128,15 @@ public class KnowledgeBaseService {
         return KnowledgeBaseResponse.from(kb);
     }
 
+    /** 删除知识库；被引用或正在重建时拒绝。 */
     @Transactional
     public void delete(Long id) {
         KnowledgeBase kb = find(id);
         if ("REINDEXING".equals(kb.getReindexStatus())) {
             throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
         }
-        // kb_ids may store ids as JSON numbers or strings ("5"); compare the text elements as bigints
-        // instead of relying on jsonb containment with a single representation.
+        // kb_ids 里的 id 可能存成 JSON 数字，也可能存成字符串（"5"）；因此把文本元素按 bigint 比较，
+        // 而不是依赖 jsonb 包含运算对某一种表示形式的假设。
         Long references = jdbc.queryForObject("""
                 SELECT count(*)
                 FROM agents a
@@ -149,6 +149,7 @@ public class KnowledgeBaseService {
         repository.delete(kb);
     }
 
+    /** 分页列出知识库并算出现有文档数。 */
     @Transactional(readOnly = true)
     public PageResponse<KnowledgeBaseResponse> list(int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -164,10 +165,14 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * One knowledge base with its live document count — what the detail page header needs.
+     * 读取单个知识库及其实时文档数，供详情页头部展示。
      *
-     * <p>Unknown ids answer 404, the same as every other read, rather than an empty object.</p>
+     * <p>id 不存在时返回 404 而非空对象，与其它读接口保持一致。</p>
+     *
+     * @param id 知识库主键
+     * @return 知识库详情
      */
+    /** 读取单个知识库及其实时文档数。 */
     @Transactional(readOnly = true)
     public KnowledgeBaseResponse get(Long id) {
         return jdbc.query(DETAIL_SQL, ROW_MAPPER, id)
@@ -182,20 +187,20 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * Starts a full reindex (ruling R6), in this exact order —
+     * 启动一次全量重建（裁决 R6），步骤顺序不可调换：
      * <ol>
-     *   <li>404 when the knowledge base does not exist;</li>
-     *   <li>CAS {@code reindex_status -> 'REINDEXING'}; zero rows = already reindexing = 409;</li>
-     *   <li>a knowledge base without an embedding model is restored to its previous status and
-     *       rejected 400 (otherwise it would brick at REINDEXING with nothing to embed);</li>
-     *   <li>the background rebuild is handed to the dedicated reindex executor (tracked by the
-     *       ingest worker's idle counter); a rejected hand-off restores the status to
-     *       {@code FAILED}.</li>
+     *   <li>知识库不存在返回 404；</li>
+     *   <li>CAS 把 {@code reindex_status} 置为 {@code 'REINDEXING'}，影响 0 行说明已在重建，返回 409；</li>
+     *   <li>没有向量模型的知识库恢复为原状态并返回 400，否则它会卡在 REINDEXING 且无内容可向量化；</li>
+     *   <li>把后台重建交给专用执行器（计入入库 worker 的空闲计数器）；交接被拒则把状态恢复为
+     *       {@code FAILED}。</li>
      * </ol>
-     * The endpoint returns 202 immediately; {@link #runReindex(Long)} does the work.
+     * 接口立即返回 202，实际工作由 {@link #runReindex(Long)} 完成。
+     *
+     * @param id 知识库主键
      */
     public void reindex(Long kbId) {
-        find(kbId); // 404 RESOURCE_NOT_FOUND for unknown ids
+        find(kbId); // id 不存在时由这里抛 404 RESOURCE_NOT_FOUND
         String previousStatus = jdbc.queryForObject(
                 "SELECT reindex_status FROM knowledge_bases WHERE id = ?", String.class, kbId);
         int updated = jdbc.update("""
@@ -208,8 +213,8 @@ public class KnowledgeBaseService {
         Long embeddingModelId = jdbc.queryForObject(
                 "SELECT embedding_model_id FROM knowledge_bases WHERE id = ?", Long.class, kbId);
         if (embeddingModelId == null) {
-            // Restore the status the CAS overwrote (not a hardcoded READY — a FAILED knowledge
-            // base without an embedding model must stay FAILED, ruling R6 step 3).
+            // 恢复被 CAS 覆盖掉的原状态（不能硬编码成 READY——一个本就 FAILED 且没有向量模型的知识库
+            // 必须保持 FAILED，裁决 R6 第 3 步）。
             jdbc.update("""
                     UPDATE knowledge_bases SET reindex_status = ?
                     WHERE id = ? AND reindex_status = 'REINDEXING'
@@ -218,7 +223,7 @@ public class KnowledgeBaseService {
         }
         boolean handedOff = worker.submitReindexTask(() -> runReindex(kbId));
         if (!handedOff) {
-            // Never leave the knowledge base bricked at REINDEXING (ruling R6).
+            // 绝不能让知识库卡死在 REINDEXING（裁决 R6）。
             jdbc.update("""
                     UPDATE knowledge_bases SET reindex_status = 'FAILED'
                     WHERE id = ? AND reindex_status = 'REINDEXING'
@@ -228,10 +233,11 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * The reindex body, running on the dedicated reindex thread: reset all non-DELETED documents of
-     * the knowledge base to PENDING with a cleared {@code error_msg}, drive each through the same
-     * (synchronous) ingest pipeline, then settle {@code reindex_status}: READY when no document is
-     * FAILED, FAILED otherwise; zero documents settle READY.
+     * 重建的实际执行体，运行在专用重建线程上：把该知识库所有非 DELETED 文档重置为 PENDING 并清空
+     * {@code error_msg}，逐个同步跑完同一条入库流水线，最后收敛 {@code reindex_status}——没有文档失败则
+     * READY，否则 FAILED；零文档同样收敛为 READY。
+     *
+     * @param kbId 知识库主键
      */
     private void runReindex(Long kbId) {
         try {
@@ -246,15 +252,14 @@ public class KnowledgeBaseService {
                 worker.runPipeline(id);
             }
         } catch (RuntimeException e) {
-            // The pipeline fails documents individually; nothing escaping this thread may stop the
-            // knowledge base from being settled in the finally block below.
+            // 流水线是逐文档失败的；无论这个线程上冒出什么异常，都不能阻止下面 finally 里的状态收尾。
             log.error("Reindex of knowledge base {} failed", kbId, e);
         } finally {
             settleReindexStatus(kbId);
         }
     }
 
-    /** CAS from REINDEXING to READY/FAILED based on whether any document ended FAILED. */
+    /** 依据是否有文档落到 FAILED，把 REINDEXING 以 CAS 方式收敛为 READY 或 FAILED。 */
     private void settleReindexStatus(Long kbId) {
         Integer failed = jdbc.queryForObject(
                 "SELECT count(*) FROM documents WHERE kb_id = ? AND status = 'FAILED'",

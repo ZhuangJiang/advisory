@@ -53,9 +53,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Document upload flow: presigned PUT that really works against the MinIO test container, idempotent
- * create on {@code objectKey}, KB/node validation, the real ingest pipeline reaching {@code READY},
- * soft delete hiding the document from reads, the ADMIN-only write matrix and retry guards.
+ * 文档上传全流程：预签名 PUT 在 MinIO 测试容器上确实可用；create 以 {@code objectKey} 幂等；
+ * 知识库与节点的存在性校验；真实入库流水线能把文档推到 {@code READY}；软删除后读接口不再返回该文档；
+ * 写操作的「仅管理员」矩阵；以及重试的前置条件保护。
  */
 class DocumentUploadTest extends IntegrationTestBase {
 
@@ -105,7 +105,7 @@ class DocumentUploadTest extends IntegrationTestBase {
 
     @AfterEach
     void cleanup() {
-        // Let any in-flight pipeline finish before rows disappear from under it.
+        // 先等正在跑的流水线结束，再把它的数据从底下抽走。
         worker.awaitIdle(WORKER_IDLE_TIMEOUT);
         for (Long kbId : createdKbIds) {
             jdbcTemplate.update("DELETE FROM documents WHERE kb_id = ?", kbId);
@@ -113,7 +113,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         }
         createdKbIds.clear();
         if (embeddingFixture != null) {
-            // Knowledge bases referencing the model are deleted above (ON DELETE RESTRICT).
+            // 引用该模型的知识库已在上面删除（外键是 ON DELETE RESTRICT）。
             embeddingFixture.close();
             embeddingFixture = null;
         }
@@ -238,7 +238,7 @@ class DocumentUploadTest extends IntegrationTestBase {
                 "SELECT status FROM documents WHERE id = ?", String.class, documentId),
                 "row must be soft-deleted, not removed");
 
-        // The cleanup runs on the worker pool: awaitIdle is the bounded wait, not a fixed sleep.
+        // 清理跑在 worker 线程池上：用有界等待 awaitIdle，而不是固定睡眠。
         assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "delete cleanup must finish");
         Integer leftoverChunks = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chunks WHERE document_id = ?", Integer.class, documentId);
@@ -302,7 +302,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         long nodeId = createNode(kbId, "inbox");
         byte[] oversized = new byte[(int) FIFTY_MB + 1];
 
-        // The client lies about the size (10 bytes); only the stored object's real size can prove it.
+        // 客户端谎报了大小（说 10 字节）；只有对已存对象做 stat 才能戳穿。
         Presigned presigned = presign(kbId, nodeId, "big.bin", 10);
         putBytes(presigned.uploadUrl(), oversized);
 
@@ -333,10 +333,9 @@ class DocumentUploadTest extends IntegrationTestBase {
     }
 
     /**
-     * Proves the unique-index backstop and the replay fallback together: the main thread holds an
-     * uncommitted row with the key (so the racing create's lookup cannot see it), the racing create
-     * blocks on the unique index, and after the commit it gets 23505 and must return the winner's
-     * row instead of inserting a duplicate.
+     * 同时验证「唯一索引兜底」与「重放回退」：主线程先持有一条未提交、但已占用该键的行
+     * （于是并发 create 的查询看不到它），并发 create 会阻塞在唯一索引上；主线程提交后它拿到 23505，
+     * 必须改而返回成功方那一行，而不是插入一条重复记录。
      */
     @Test
     void concurrentCreateReusesTheWinningRow() throws Exception {
@@ -374,9 +373,9 @@ class DocumentUploadTest extends IntegrationTestBase {
     }
 
     /**
-     * Forces the FAILED path without a production test hook: a temporary trigger makes the
-     * {@code PENDING -> PARSING} compare-and-set blow up, the worker catches it and writes FAILED.
-     * Dropping the trigger then lets retry drive the document to READY.
+     * 不引入生产代码里的测试钩子，也要造出 FAILED 路径：临时建一个触发器，让
+     * {@code PENDING -> PARSING} 的比较并设置失败，worker 捕获后写入 FAILED；随后删掉触发器，
+     * 让重试把文档推到 READY。
      */
     @Test
     void failedDocumentCanBeRetried() throws Exception {
@@ -384,8 +383,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         long nodeId = createNode(kbId, "inbox");
         String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/failing.txt";
         long documentId = insertDocumentRow(kbId, nodeId, "failing.txt", objectKey, 3);
-        // Since Task 7 the pipeline really parses the stored object on retry, so the upload must
-        // exist in MinIO for the retry to reach READY.
+        // 自 Task 7 起，重试会真的去解析已存对象，因此 MinIO 里必须有这个上传对象，重试才可能到 READY。
         storageService.putText(objectKey, "retry body after the simulated failure");
 
         String function = "fail_ingest_" + UUID.randomUUID().toString().replace("-", "");
@@ -436,7 +434,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         return id;
     }
 
-    /** Waits until another backend is blocked on a row/index lock, i.e. the racing insert is queued. */
+    /** 等到另一个连接确实被行锁或索引锁挡住，也就是并发插入已经排进队列。 */
     private void awaitBackendWaitingOnALock() {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (System.nanoTime() < deadline) {
@@ -539,8 +537,8 @@ class DocumentUploadTest extends IntegrationTestBase {
                 .getResponse()
                 .getContentAsString();
         long id = ((Number) JsonPath.read(body, "$.data.id")).longValue();
-        // Since Task 7 the ingest pipeline really parses/chunks/embeds, so a KB driving documents
-        // to READY needs an embedding model; the worker fails documents without one.
+        // 自 Task 7 起流水线会真的解析、切片、向量化，因此知识库必须配向量模型才能把文档推到 READY；
+        // 没有模型时 worker 会让文档失败。
         embeddingFixture.wire(id);
         createdKbIds.add(id);
         return id;

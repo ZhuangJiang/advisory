@@ -13,18 +13,15 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC access for the ltree-specific parts of {@code kb_nodes} that JPA cannot express cleanly.
+ * {@code kb_nodes} 中 JPA 难以表达的那部分（ltree）的 JDBC 访问层。
  *
- * <p>The path label scheme is {@code n{id}} and a node's path is derived from its id and its
- * parent's path, so a row is inserted with a placeholder path and then updated once the generated
- * id is known. Subtree moves are a single {@code UPDATE} using ltree's {@code subpath}/{@code
- * nlevel}/{@code <@} operators; that statement also rewrites {@code parent_id} for the moved node so
- * the column, the unique {@code (kb_id, parent_id, name)} index and the {@code path} stay
- * consistent.</p>
+ * <p>路径标签的规则是 {@code n{id}}，节点路径由自身 id 与父节点路径推导，因此插入时先写占位路径，
+ * 拿到自增 id 后再回填真实路径。子树移动用一条 {@code UPDATE} 借助 ltree 的
+ * {@code subpath}/{@code nlevel}/{@code <@} 运算符完成；同一条语句还会改写被移动节点的 {@code parent_id}，
+ * 保证该列、唯一索引 {@code (kb_id, parent_id, name)} 与 {@code path} 三者始终一致。</p>
  *
- * <p>Reads also live here (as {@link KbNodeRow} projections): the tree is mutated with JDBC, and a
- * JPA {@code findById} after such a write would return the stale entity from the persistence
- * context instead of the row that is actually stored.</p>
+ * <p>读取也放在这里（以 {@link KbNodeRow} 投影返回）：树是用 JDBC 改的，改完再用 JPA 的
+ * {@code findById} 读到的会是持久化上下文里的旧实体，而不是真正落库的那一行。</p>
  */
 @Repository
 public class KbNodeJdbcRepository {
@@ -46,30 +43,36 @@ public class KbNodeJdbcRepository {
         this.jdbc = jdbc;
     }
 
-    /** Reads a single node straight from the database, bypassing any JPA persistence context. */
+    /** 直接从数据库读取单个节点，绕过一切 JPA 持久化上下文。 */
     public Optional<KbNodeRow> findById(long id) {
         return jdbc.query("SELECT " + COLUMNS + " FROM kb_nodes WHERE id = ?", ROW_MAPPER, id)
                 .stream()
                 .findFirst();
     }
 
-    /** Lists the nodes of a knowledge base ordered by ltree path (parents before children). */
+    /** 列出某知识库的全部节点，按 ltree 路径排序（父节点一定排在子节点之前）。 */
     public List<KbNodeRow> findByKbId(long kbId) {
-        // Qualify the ORDER BY: the output column "path" is text, the table column is ltree.
+        // ORDER BY 必须带表名限定：输出列 "path" 是 text，而表列是 ltree，不加限定会排序到文本类型上。
         return jdbc.query(
                 "SELECT " + COLUMNS + " FROM kb_nodes WHERE kb_id = ? ORDER BY kb_nodes.path",
                 ROW_MAPPER, kbId);
     }
 
     /**
-     * Inserts a node and sets its real ltree path. Returns the generated id. For a child,
-     * {@code parentPath} must be the parent's current path.
+     * 插入节点并回填真实的 ltree 路径。
+     *
+     * @param kbId       所属知识库
+     * @param parentId   父节点，{@code null} 表示根
+     * @param parentPath 父节点当前路径；创建根节点时可为 {@code null}
+     * @param name       节点名称
+     * @param sortOrder  同层排序序号
+     * @return 数据库生成的主键
      */
     public long insert(Long kbId, Long parentId, String parentPath, String name) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
-            // 'placeholder' is an unknown-type literal that PostgreSQL coerces to ltree; binding a
-            // String here would arrive as varchar and fail the implicit cast.
+            // 'placeholder' 是未知类型字面量，PostgreSQL 会把它隐式转换为 ltree；
+            // 若在这里绑定一个 String，到达服务端时类型是 varchar，隐式转换会直接失败。
             PreparedStatement ps = connection.prepareStatement(
                     "INSERT INTO kb_nodes (kb_id, parent_id, name, path, sort_order) VALUES (?, ?, ?, 'placeholder', 0)",
                     new String[] {"id"});
@@ -99,17 +102,21 @@ public class KbNodeJdbcRepository {
     }
 
     /**
-     * Moves the subtree rooted at {@code oldNodePath} to {@code newNodePath} and reparents the moved
-     * node to {@code newParentId} ({@code null} = root) in one atomic statement. Descendants keep
-     * their relative suffix; their {@code parent_id} is untouched because only the moved node
-     * changes parent.
+     * 用一条原子语句把以 {@code oldNodePath} 为根的子树搬到 {@code newNodePath}，同时把被移动节点的
+     * 父节点改为 {@code newParentId}（{@code null} 表示根）。后代节点保留各自的相对后缀，其
+     * {@code parent_id} 不用改——父节点发生变化的只有被移动的那一个。
      *
-     * <p>The moved node itself is handled by the {@code CASE} branch because ltree's
-     * {@code subpath(path, nlevel(...))} raises "invalid positions" when {@code start == nlevel};
-     * descendants always have {@code nlevel > nlevel(oldNodePath)} so {@code subpath} is valid there.
-     * A {@code null} parent is bound as SQL {@code NULL} ({@link Types#BIGINT}), never as {@code 0}.</p>
+     * <p>被移动节点自身必须走 {@code CASE} 分支：ltree 的 {@code subpath(path, nlevel(...))} 在
+     * {@code start == nlevel} 时会直接抛「invalid positions」；而后代的 {@code nlevel} 恒大于
+     * {@code nlevel(oldNodePath)}，{@code subpath} 对它们总是合法。
+     * 空父节点要绑定为 SQL {@code NULL}（{@link Types#BIGINT}），绝不能绑成 {@code 0}——
+     * 那会指向一个不存在的父节点。</p>
      *
-     * @return the number of rows updated (the subtree size)
+     * @param oldNodePath  原子树的根路径
+     * @param newNodePath  移动后的新路径
+     * @param newParentId  新父节点，{@code null} 表示根
+     * @param kbId         知识库，限定更新范围
+     * @return 更新的行数，即子树大小
      */
     public int moveSubtree(long nodeId, String oldNodePath, String newNodePath, Long newParentId) {
         return jdbc.update(connection -> {
@@ -138,8 +145,12 @@ public class KbNodeJdbcRepository {
     }
 
     /**
-     * Returns true when {@code descendantPath} is {@code ancestorPath} or lives inside it
-     * (equivalent to {@code descendantPath <@ ancestorPath} in ltree).
+     * 判断 {@code descendantPath} 是否就是 {@code ancestorPath} 本身或位于其子树内
+     * （等价于 ltree 的 {@code descendantPath <@ ancestorPath}）。
+     *
+     * @param descendantPath 待判断的路径
+     * @param ancestorPath   祖先路径
+     * @return 在子树内（含自身）返回 {@code true}
      */
     public boolean isDescendantOrSelf(String descendantPath, String ancestorPath) {
         Boolean result = jdbc.queryForObject(
@@ -148,12 +159,18 @@ public class KbNodeJdbcRepository {
     }
 
     /**
-     * Returns true when a sibling with the given (trimmed) name already exists under the same parent
-     * in the knowledge base. {@code excludeId} is used to ignore the node itself on rename/move.
+     * 判断同一父节点下是否已存在同名（已去空格）的兄弟节点。
      *
-     * <p>Two variants are used so the {@code (kb_id, parent_id, name)} index can serve the common
-     * non-null-parent case; only the root case needs the partial {@code ux_kb_nodes_root_name}
-     * index via {@code parent_id IS NULL}.</p>
+     * <p>{@code excludeId} 用于重命名或移动时排除节点自身，否则它总会和自己重名。</p>
+     *
+     * <p>拆成两种查询是为了让 {@code (kb_id, parent_id, name)} 索引能服务「父节点非空」这个常见情形；
+     * 只有根节点这一种需要走 {@code parent_id IS NULL} 的部分索引 {@code ux_kb_nodes_root_name}。</p>
+     *
+     * @param kbId      知识库
+     * @param parentId  父节点，{@code null} 表示根层
+     * @param name      待检查的名称
+     * @param excludeId 需要排除的节点 id，可为 {@code null}
+     * @return 已存在同名兄弟节点返回 {@code true}
      */
     public boolean existsSibling(Long kbId, Long parentId, String name, Long excludeId) {
         StringBuilder sql = new StringBuilder("SELECT count(*) FROM kb_nodes WHERE kb_id = ? AND ");
@@ -176,19 +193,19 @@ public class KbNodeJdbcRepository {
         return count != null && count > 0;
     }
 
-    /** Counts the direct children of a node (used to reject deletion of a non-leaf). */
+    /** 统计节点的直接子节点数，用于拒绝删除非叶子节点。 */
     public long countByParentId(long parentId) {
         Long count = jdbc.queryForObject(
                 "SELECT count(*) FROM kb_nodes WHERE parent_id = ?", Long.class, parentId);
         return count == null ? 0 : count;
     }
 
-    /** Renames a node by id. Unique-index violations surface as {@code DataIntegrityViolationException}. */
+    /** 按 id 重命名节点；触发唯一索引冲突时会抛 {@code DataIntegrityViolationException}，由上层翻译。 */
     public void updateName(long id, String name) {
         jdbc.update("UPDATE kb_nodes SET name = ? WHERE id = ?", name, id);
     }
 
-    /** Counts non-deleted documents attached to the node (used to reject deletion). */
+    /** 统计挂在该节点上的未删除文档数，用于拒绝删除仍有文档的节点。 */
     public long countDocuments(long nodeId) {
         Long count = jdbc.queryForObject(
                 "SELECT count(*) FROM documents WHERE node_id = ? AND status <> 'DELETED'", Long.class, nodeId);

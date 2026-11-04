@@ -11,12 +11,11 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.Instant;
 
 /**
- * A node in a knowledge base's tree (table {@code kb_nodes}).
+ * 知识库树中的一个节点（表 {@code kb_nodes}）。
  *
- * <p>The {@code path} column is a PostgreSQL {@code ltree}. It is mapped read-only here: the path is
- * derived from the node id and its parent's path, so it is written exclusively through
- * {@code KbNodeJdbcRepository} with explicit {@code CAST(... AS ltree)} expressions. Mapping it
- * (rather than omitting it) lets {@code ddl-auto=validate} check the {@code ltree} column type.</p>
+ * <p>{@code path} 是 PostgreSQL 的 {@code ltree} 类型。这里按只读方式映射：路径由节点 id 与父节点路径推导，
+ * 只通过 {@code KbNodeJdbcRepository} 中显式的 {@code CAST(... AS ltree)} 表达式写入。之所以仍然映射该列
+ * （而不是忽略它），是为了让 {@code ddl-auto=validate} 能校验 {@code ltree} 列的类型。</p>
  */
 @Entity
 @Table(name = "kb_nodes")
@@ -46,7 +45,7 @@ public class KbNode {
     private Instant createdAt;
 
     protected KbNode() {
-        // for JPA
+        // 供 JPA 使用
     }
 
     public KbNode(Long kbId, Long parentId, String name) {

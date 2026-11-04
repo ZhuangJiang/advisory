@@ -51,15 +51,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The real ingest pipeline against the real database: the dimension guard aborts <em>before any
- * chunk delete</em>, chunk rewrite on re-runs is idempotent, chunking is structure-aware, and the
- * parsed Markdown lands in MinIO with {@code documents.parsed_key} set. The {@link EmbeddingGateway}
- * is mocked so no test calls out to a provider; a {@link ChunkWriter} spy verifies the chunk list
- * the worker handed over.
+ * 用真实数据库跑真实入库流水线：维度校验会在<em>删除任何片段之前</em>中止；重复运行时片段整体重写且幂等；
+ * 切片具备结构感知；解析出的 Markdown 会落到 MinIO 并写回 {@code documents.parsed_key}。
+ * {@link EmbeddingGateway} 被 mock 掉，测试因此不会真的调用提供商；再用 {@link ChunkWriter} 的 spy
+ * 校验 worker 交过来的片段列表。
  *
- * <p>Knowledge bases get a wired {@code embedding_model_id} because the worker must fail documents
- * whose knowledge base has none (ruling R3); the no-model failure path is covered by
- * {@code ReindexTest#reindexWithoutEmbeddingModelRejected}.</p>
+ * <p>知识库都配了 {@code embedding_model_id}，因为知识库没有向量模型时 worker 必须让文档失败（裁决 R3）；
+ * 那条「无模型」失败路径由 {@code ReindexTest#reindexWithoutEmbeddingModelRejected} 覆盖。</p>
  */
 class EmbeddingWriteTest extends IntegrationTestBase {
 
@@ -111,7 +109,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
     void cleanup() {
         worker.awaitIdle(WORKER_IDLE_TIMEOUT);
         for (Long kbId : createdKbIds) {
-            // documents and kb_nodes reference the kb; chunks cascade off documents.
+            // 文档与 kb_nodes 都引用该知识库；片段随文档级联删除。
             jdbcTemplate.update("DELETE FROM knowledge_bases WHERE id = ?", kbId);
         }
         createdKbIds.clear();
@@ -130,7 +128,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         insertChunk(documentId, kbId, nodeId, 0, "old-broken-a");
         insertChunk(documentId, kbId, nodeId, 1, "old-broken-b");
 
-        // Buggy provider output: one 3-dimensional vector per chunk instead of 1024.
+        // 模拟提供商返回了错误数据：每个片段的向量是 3 维而不是 1024 维。
         when(embeddingGateway.embed(anyLong(), anyList())).thenAnswer(invocation -> {
             List<String> texts = invocation.getArgument(1);
             List<float[]> vectors = new ArrayList<>(texts.size());
@@ -149,8 +147,8 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         assertNotNull(errorMsg, "failure must carry an error message");
         assertTrue(errorMsg.contains("dimension"), "error must mention the dimension, got: " + errorMsg);
 
-        // The DELETE lives in the same transaction as the batch INSERT; the pre-validation abort
-        // means the seeded chunks must still be there, unchanged.
+        // DELETE 与批量 INSERT 在同一个事务里；既然在写之前就被校验拦下，
+        // 预先写入的片段必须原封不动地还在那里。
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chunks WHERE document_id = ?", Integer.class, documentId);
         assertEquals(2, count, "old chunks must survive the aborted ingest");
@@ -177,7 +175,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         assertNotNull(countAfterFirst);
         assertTrue(countAfterFirst >= 1, "a non-empty document must produce at least one chunk");
 
-        // Force a second full run of the same document through the pipeline.
+        // 让同一个文档完整地再跑一遍流水线，验证幂等。
         assertTrue(worker.transition(documentId, DocumentStatus.READY, DocumentStatus.PENDING, null));
         worker.enqueue(documentId);
         assertTrue(worker.awaitIdle(WORKER_IDLE_TIMEOUT), "second ingest must finish");
@@ -222,8 +220,8 @@ class EmbeddingWriteTest extends IntegrationTestBase {
                 Integer.class, documentId, nodeId);
         assertEquals(0, wrongNode, "every chunk must point at the document's node");
 
-        // headingPath is now a stored column (V3), so the section trail can be asserted from the DB
-        // instead of only from the list handed to the writer.
+        // headingPath 现在是真实存储的列（V3），因此可以直接从库里断言章节路径，
+        // 而不必只依赖交给 writer 的那份列表。
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TextChunk>> chunkCaptor = ArgumentCaptor.forClass((Class) List.class);
         verify(chunkWriter).replaceAll(
@@ -241,9 +239,9 @@ class EmbeddingWriteTest extends IntegrationTestBase {
     }
 
     /**
-     * The global chunking contract caps overlap at 15%; a config beyond that range is a document
-     * failure ({@code VALIDATION_FAILED} carried in {@code error_msg}) — not an exception escaping
-     * the worker thread and not silently accepted.
+     * 全局切片契约把重叠上限设为 15%；超出该范围的配置按文档失败处理
+     * （{@code VALIDATION_FAILED} 写进 {@code error_msg}）——既不能让异常冲出工作线程，
+     * 也不能睁一只眼闭一只眼地接受。
      */
     @Test
     void overlapRatioOutOfRangeFailsDocument() throws Exception {
@@ -272,8 +270,8 @@ class EmbeddingWriteTest extends IntegrationTestBase {
     }
 
     /**
-     * A {@code models} row whose declared dimension disagrees with {@code app.embedding.dimension}
-     * must be rejected before any provider network call is made.
+     * {@code models} 行声明的维度与 {@code app.embedding.dimension} 不一致时，必须在发出任何提供商网络调用
+     * 之前就被拒绝——否则既浪费调用额度，又只能拿到一批注定无法入库的向量。
      */
     @Test
     void modelDimensionCrossCheckRejectsBeforeProviderCall() {
@@ -312,7 +310,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
                 "the stored parsed Markdown must be the parser output");
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private void stubSuccessfulEmbedding() {
         when(embeddingGateway.embed(anyLong(), anyList())).thenAnswer(invocation -> {

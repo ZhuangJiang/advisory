@@ -5,14 +5,12 @@ import com.advisory.knowledge.retrieval.RetrievedChunk;
 import java.util.List;
 
 /**
- * The fixed prompts of the four-phase pipeline (spec §11, plan Task 11 step 3).
+ * 四阶段流水线使用的固定提示词（spec §11，plan Task 11 第 3 步）。
  *
- * <p>They are constants, not configuration: the orchestration strategy is deliberately not
- * user-configurable, and a prompt change must be a code review, not a database edit. The citation
- * contract lives in {@link #answerSystem()}: numbered snippets only, {@code [n]} after every claim,
- * and an explicit "not found" instead of guessing. The same numbering is produced by
- * {@link #numberedEvidence(List)}, so {@code [n]} in the answer maps to {@code citations[n-1]}
- * without any post-processing.</p>
+ * <p>它们是常量而非配置：编排策略有意不开放给用户调整，改提示词应当走代码评审而不是改数据库。
+ * 引用契约写在 {@link #answerSystem()} 里：只用编号片段作答、每个论断后标 {@code [n]}、找不到就明确说
+ * 「未找到」而不是猜。编号同样由 {@link #numberedEvidence(List)} 生成，因此答案里的 {@code [n]}
+ * 无需任何后处理就能映射到 {@code citations[n-1]}。</p>
  */
 public final class PromptTemplates {
 
@@ -64,8 +62,10 @@ public final class PromptTemplates {
     }
 
     /**
-     * The fixed ANSWER rules. Kept as a constant because they are the citation contract: an agent
-     * author may add a persona, but may not weaken "cite every claim / never guess" (spec §4).
+     * ANSWER 的固定规则，以常量形式固化。
+     *
+     * <p>这几条就是引用契约：Agent 的作者可以追加人设与语气，但不能削弱「每个论断都要引用、绝不猜测」
+     * 这两条底线（spec §4）。</p>
      */
     private static final String ANSWER_RULES = """
             你是企业知识库问答助手。只能使用用户提供的编号片段作答，禁止使用片段之外的知识。
@@ -76,13 +76,14 @@ public final class PromptTemplates {
             """;
 
     /**
-     * The ANSWER system prompt with the agent's own {@code system_prompt} in front of the fixed
-     * rules.
+     * 把 Agent 自己的 {@code system_prompt} 放在固定规则之前，组成 ANSWER 的系统提示词。
      *
-     * <p>Only ANSWER is personalised: PLAN and REFLECT are structural steps that must emit parsable
-     * JSON, and a free-form persona prompt there is a reliable way to break parsing. The rules go
-     * last and are declared to win on conflict, so an agent prompt cannot silently disable the
-     * citation contract.</p>
+     * <p>只有 ANSWER 会做个性化：PLAN 与 REFLECT 是必须产出可解析 JSON 的结构化步骤，在这里塞一段自由
+     * 发挥的人设提示词，几乎必然把解析搞坏。固定规则放在最后并声明冲突时以其为准，因此 Agent 的提示词
+     * 无法悄悄废掉引用契约。</p>
+     *
+     * @param agentSystemPrompt Agent 自定义的系统提示词，可为空
+     * @return 拼好的系统提示词
      */
     public static String answerSystem(String agentSystemPrompt) {
         String role = agentSystemPrompt == null ? "" : agentSystemPrompt.trim();
@@ -106,7 +107,7 @@ public final class PromptTemplates {
                 """.formatted(question, numberedEvidence);
     }
 
-    /** Renders the evidence as {@code [n] 文档名（节点：…）} followed by the snippet text. */
+    /** 把证据渲染成 {@code [n] 文档名（节点：…）} 加片段正文的形式。 */
     public static String numberedEvidence(List<RetrievedChunk> chunks) {
         if (chunks == null || chunks.isEmpty()) {
             return "（无）";

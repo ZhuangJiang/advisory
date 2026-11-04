@@ -26,16 +26,15 @@ import org.springframework.web.client.RestClient;
 import io.micrometer.observation.ObservationRegistry;
 
 /**
- * Builds one Spring AI {@link EmbeddingModel} for a {@code models}/{@code model_providers} row pair.
+ * 为 {@code models} 与 {@code model_providers} 的一对行构造 Spring AI {@link EmbeddingModel}。
  *
- * <p>Clients are constructed programmatically instead of via auto-configuration on purpose: a
- * {@code models} row maps to exactly one provider at runtime, while the Spring AI starters wire a
- * single client from static {@code application.yml} values. Vector storage is handled elsewhere
- * (Task 8 issues vector search as explicit SQL), so no Spring AI vector-store bean exists.</p>
+ * <p>刻意不用自动配置而是手工构造：一个 {@code models} 行在运行时对应唯一提供商，而 Spring AI starter 只会
+ * 依据静态 {@code application.yml} 装配一个客户端。向量存储也不走 Spring AI（Task 8 直接用 SQL 做向量检索），
+ * 因此整个应用里没有 vector-store bean。</p>
  */
 public class EmbeddingClientFactory {
 
-    /** Hard timeouts required by the spec for a single provider call. */
+    /** 规格要求的单次提供商调用硬超时。 */
     static final Duration PROVIDER_TIMEOUT = Duration.ofSeconds(60);
 
     private final ModelLookup lookup;
@@ -50,13 +49,15 @@ public class EmbeddingClientFactory {
     }
 
     /**
-     * Resolves the model row and builds the matching client. A missing model, a disabled
-     * model/provider, a wrong {@code capability} or an unknown provider type is a validation error
-     * (never an NPE) — the ingest worker turns it into a document failure with the message intact.
+     * 解析模型行并构造对应客户端。模型不存在、模型或提供商已停用、能力不匹配、提供商类型不支持，
+     * 一律作为校验错误抛出（绝不让 NPE 冒出去），入库线程据此把文档置为失败并保留可读原因。
      *
-     * <p>The returned record pairs the client with the request options it needs (the model name in
-     * the concrete provider options type):{@code EmbeddingRequest(batch, client.options())} always
-     * carries the configured model, independent of provider-guessable defaults.</p>
+     * <p>返回值把客户端与它需要的请求选项绑在一起（模型名放在具体提供商的选项类型里）：
+     * {@code EmbeddingRequest(batch, client.options())} 因此总能带上配置中的模型名，
+     * 不依赖提供商自行猜测的默认值。</p>
+     *
+     * @param embeddingModelId {@code models.id}
+     * @return 客户端及其选项
      */
     public EmbeddingClient forEmbedding(long embeddingModelId) {
         ModelRow row = lookup.find(embeddingModelId).orElseThrow(() -> new AppException(
@@ -72,8 +73,8 @@ public class EmbeddingClientFactory {
         if (row.modelName() == null || row.modelName().isBlank()) {
             throw new AppException(ErrorCode.VALIDATION_FAILED, "embedding 模型缺少 model_name");
         }
-        // Cheap early failure before any provider network call: a models row declaring a
-        // different dimension than app.embedding.dimension can only produce unusable vectors.
+        // 在发起任何网络调用之前就快速失败：模型行声明的维度与 app.embedding.dimension 不一致时，
+        // 产出的向量必然无法入库。
         if (row.dimension() != null && row.dimension() != configuredDimension) {
             throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
                     "模型向量维度不一致: models.dimension=" + row.dimension()
@@ -89,16 +90,19 @@ public class EmbeddingClientFactory {
         };
     }
 
+    /** 客户端与其请求选项的组合。 */
     public record EmbeddingClient(EmbeddingModel model, EmbeddingOptions options) {
     }
 
     /**
-     * Decrypts the provider's stored {@code api_key_cipher} with the Task 9 {@link CryptoService}
-     * (AES-GCM; this body replaced ruling R5's plaintext passthrough seam). A key that cannot be
-     * decrypted fails fast with a clear {@link AppException} — the ingest worker then fails the
-     * document with that readable message; the ciphertext is never sent to a provider as if it
-     * were the bearer token. A missing key stays {@code null} (OpenAI clients without
-     * authentication substitute their own placeholder below).
+     * 用 {@link CryptoService}（AES-GCM）解密提供商保存的 {@code api_key_cipher}。
+     *
+     * <p>解不开时立即抛 {@link AppException} 并给出明确原因，入库线程会把该文档置为失败并保留这句话；
+     * 绝不能把密文当作 bearer token 发给提供商——那样只会换回一个毫无线索的 401。未配置密钥时返回
+     * {@code null}，由下面的 OpenAI 客户端补一个占位符。</p>
+     *
+     * @param provider 提供商
+     * @return 明文密钥，未配置时为 {@code null}
      */
     String resolveApiKey(long providerId, String apiKeyCipher) {
         if (apiKeyCipher == null || apiKeyCipher.isBlank()) {
@@ -118,8 +122,8 @@ public class EmbeddingClientFactory {
             throw new AppException(ErrorCode.VALIDATION_FAILED, "提供商缺少 base_url");
         }
         String trimmedUrl = baseUrl.trim().replaceAll("/+$", "");
-        // Some OpenAI-compatible deployments run without authentication; the client still requires
-        // a non-null key, so an empty placeholder is sent.
+        // 有些 OpenAI 兼容实现以无鉴权方式运行，而客户端不允许密钥为 null，
+        // 因此这里送一个空占位符。
         String effectiveKey = (apiKey == null || apiKey.isBlank()) ? "unused" : apiKey;
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder().model(modelName).build();
         OpenAiApi api = OpenAiApi.builder()

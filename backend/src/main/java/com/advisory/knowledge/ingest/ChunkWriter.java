@@ -13,16 +13,14 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Idempotent chunk storage: {@link #replaceAll} deletes a document's chunks and inserts the fresh
- * batch inside one transaction, so a {@code FAILED} or retried ingest leaves either the entire old
- * set or the entire new set, never a mixture.
+ * 幂等的片段存储：{@link #replaceAll} 在同一个事务里先删掉该文档的全部片段，再写入新的一批，
+ * 因此一次失败的或重试的入库，库里要么全是旧数据、要么全是新数据，绝不会出现新旧混排。
  *
- * <p>Guards run <em>before</em> the {@code DELETE} (the caller and {@link SpringAiEmbeddingGateway}
- * validate too, but this is where the invariant is provable): a chunk/vector count mismatch is an
- * internal contract violation ({@link ErrorCode#INTERNAL_ERROR}), and every vector must carry
- * exactly {@code app.embedding.dimension} dimensions or nothing at all is written and
- * {@link ErrorCode#EMBEDDING_DIMENSION_MISMATCH} is thrown. {@code seq} comes from
- * {@link TextChunk#seq()} and is never renumbered.</p>
+ * <p>所有校验都在 {@code DELETE} <em>之前</em>完成（调用方与 {@link SpringAiEmbeddingGateway} 也会校验，
+ * 但这里才是约束可被证明的地方）：片段数与向量数不一致属于内部契约被破坏
+ * （{@link ErrorCode#INTERNAL_ERROR}）；每个向量必须正好是 {@code app.embedding.dimension} 维，
+ * 否则一行都不写并抛 {@link ErrorCode#EMBEDDING_DIMENSION_MISMATCH}。{@code seq} 直接取自
+ * {@link TextChunk#seq()}，不做任何重排，保证与文档顺序一致。</p>
  */
 @Component
 public class ChunkWriter {
@@ -46,12 +44,15 @@ public class ChunkWriter {
     }
 
     /**
-     * @param documentId owning document
-     * @param kbId       knowledge base id (column {@code chunks.kb_id})
-     * @param nodeId     document node, may be {@code null}
-     * @param chunks     chunks in document order
-     * @param vectors    one vector of length {@code app.embedding.dimension} per chunk, same order
+     * 用新一批片段整体替换该文档的旧片段。
+     *
+     * @param documentId 所属文档
+     * @param kbId       知识库 id（列 {@code chunks.kb_id}），冗余存储以便检索时免去关联
+     * @param nodeId     文档所在节点，可为 {@code null}
+     * @param chunks     按文档顺序排列的片段
+     * @param vectors    与片段一一对应的向量，每个长度均为 {@code app.embedding.dimension}
      */
+    /** 在一个事务内整体替换文档的片段。 */
     @Transactional
     public void replaceAll(Long documentId, Long kbId, Long nodeId,
                            List<TextChunk> chunks, List<float[]> vectors) {
@@ -82,8 +83,8 @@ public class ChunkWriter {
 
     private void validateBeforeAnyDelete(long documentId, List<TextChunk> chunks, List<float[]> vectors) {
         if (chunks.size() != vectors.size()) {
-            // Internal contract violation between worker and writer, not a provider problem:
-            // the gateway guarantees one vector per chunk, so a count mismatch is our bug.
+            // 这是 worker 与 writer 之间的内部契约被破坏，不是提供商的问题：
+            // 网关保证每个片段有且只有一个向量，数量对不上说明是我们自己的 bug。
             throw new AppException(ErrorCode.INTERNAL_ERROR,
                     "Embedding count mismatch: " + chunks.size() + " chunk(s) but "
                             + vectors.size() + " vector(s) for document " + documentId);
@@ -99,7 +100,7 @@ public class ChunkWriter {
         }
     }
 
-    /** pgvector text form {@code [f1,f2,...]}; strtof parses Java float notation (incl. exponents). */
+    /** pgvector 的文本格式 {@code [f1,f2,...]}；strtof 能解析 Java 的浮点写法（含指数形式）。 */
     static String toPgVectorText(float[] vector) {
         StringBuilder out = new StringBuilder(vector.length * 8 + 2);
         out.append('[');

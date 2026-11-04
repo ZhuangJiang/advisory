@@ -4,7 +4,7 @@ import com.advisory.chat.domain.ReasoningStep;
 
 import java.time.Instant;
 
-/** One persisted reasoning step; {@code payload} is the step's JSON as produced by the run. */
+/** 一条已落库的推理步骤；{@code payload} 是运行时原样产出的步骤 JSON。 */
 public record ReasoningStepResponse(int round, String phase, String summary, String payload,
                                     long latencyMs, Instant createdAt) {
 

@@ -5,7 +5,7 @@ import com.advisory.chat.domain.MessageStatus;
 
 import java.time.Instant;
 
-/** Lightweight message row for {@code GET /api/conversations/{id}/messages}. */
+/** {@code GET /api/conversations/{id}/messages} 使用的轻量消息行，不含步骤与引用明细。 */
 public record MessageSummaryResponse(long id, long conversationId, String role, MessageStatus status,
                                      String content, int citationCount, Instant createdAt) {
 

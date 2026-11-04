@@ -22,14 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Node-tree endpoints. Reads are open to any authenticated user; writes are ADMIN-only.
+ * 节点树接口。读操作对所有已登录用户开放，写操作仅限管理员。
  *
- * <p>The {@code PATCH} body distinguishes "parentId present" (including {@code null} = move to
- * root) from "parentId absent" (no move) by inspecting the raw JSON, because a DTO cannot tell
- * "absent" from "null". That also means the two fields are validated by hand: {@code name} must be a
- * string and {@code parentId} must be {@code null} or an integral number, otherwise the request is
- * rejected with {@code VALIDATION_FAILED} instead of being coerced to {@code 0} and reported as a
- * 404.</p>
+ * <p>{@code PATCH} 的请求体通过直接读原始 JSON 来区分「显式传了 parentId」（其中 {@code null} 表示移到根）
+ * 与「没传 parentId」（不移动）——DTO 无法表达「字段缺省」与「字段为 null」的差别。这也意味着两个字段要手工校验：
+ * {@code name} 必须是字符串，{@code parentId} 必须是 {@code null} 或整数，否则以 {@code VALIDATION_FAILED}
+ * 拒绝，而不是被强转成 {@code 0} 之后报一个莫名其妙的 404。</p>
  */
 @RestController
 public class NodeController {
@@ -40,12 +38,14 @@ public class NodeController {
         this.service = service;
     }
 
+    /** 列出知识库的节点树，按路径排序保证父节点在前。 */
     @GetMapping("/api/knowledge-bases/{kbId}/nodes")
     public ApiResponse<List<NodeResponse>> list(@PathVariable Long kbId) {
         List<NodeResponse> nodes = service.listNodes(kbId).stream().map(NodeResponse::from).toList();
         return ApiResponse.ok(nodes);
     }
 
+    /** 新建节点，同一父节点下不可重名。 */
     @PostMapping("/api/knowledge-bases/{kbId}/nodes")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasRole('ADMIN')")
@@ -54,6 +54,7 @@ public class NodeController {
         return ApiResponse.ok(NodeResponse.from(service.createNode(kbId, body.parentId(), body.name())));
     }
 
+    /** 重命名与移动二合一，通过原始 JSON 区分「未传」与「传 null」。 */
     @PatchMapping("/api/nodes/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<NodeResponse> patch(@PathVariable Long id, @RequestBody JsonNode body) {
@@ -85,6 +86,7 @@ public class NodeController {
         return ApiResponse.ok(NodeResponse.from(service.updateNode(id, name, parentId, move)));
     }
 
+    /** 删除节点；有子节点或仍有文档时拒绝。 */
     @DeleteMapping("/api/nodes/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(@PathVariable Long id) {

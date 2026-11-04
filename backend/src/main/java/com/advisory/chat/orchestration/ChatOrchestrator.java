@@ -26,39 +26,35 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
- * The fixed four-phase state machine: PLAN (once) → RETRIEVE → REFLECT → (loop) → ANSWER.
+ * 固定的四阶段状态机：PLAN（一次）→ RETRIEVE → REFLECT →（循环）→ ANSWER。
  *
- * <p>The loop follows spec §11 literally: PLAN runs once and produces 1–3 queries; every following
- * round re-enters at RETRIEVE with the queries REFLECT proposed, so a run with
- * {@code maxRounds = 3} is one PLAN, three RETRIEVE and three REFLECT steps plus ANSWER. The loop
- * ends when REFLECT reports {@code sufficient=true} or {@code round >= maxRounds}.</p>
+ * <p>循环严格按 spec §11 实现：PLAN 只跑一次并产出 1–3 条检索语句；之后每一轮都从这里提出的语句重新进入
+ * RETRIEVE，因此 {@code maxRounds = 3} 意味着 1 次 PLAN、3 次 RETRIEVE、3 次 REFLECT，再加 1 次 ANSWER。
+ * 当 REFLECT 报告 {@code sufficient=true} 或 {@code round >= maxRounds} 时结束循环。</p>
  *
- * <p>Failure handling:</p>
+ * <p>失败处理：</p>
  * <ul>
- *   <li><b>unparsable structured output</b> — treated as "insufficient"; two <em>consecutive</em>
- *       REFLECT parse failures jump to ANSWER with {@code truncated=true}. An unparsable PLAN falls
- *       back to the raw question and the run continues;</li>
- *   <li><b>step timeout (60s) / overall timeout (180s)</b> — straight to ANSWER with whatever
- *       evidence exists and {@code truncated=true}; the last REFLECT draft is the fallback when the
- *       final call cannot run;</li>
- *   <li><b>no evidence at all</b> — the model is never asked to answer and the fixed
- *       {@link #NO_EVIDENCE_ANSWER} is returned (spec §4: no answering from parametric knowledge).</li>
+ *   <li><b>结构化输出不可解析</b>——视为「证据不足」；REFLECT 连续两次解析失败则直接跳转 ANSWER 并标记
+ *       {@code truncated=true}。PLAN 解析失败则退回用户原始问题，流程继续；</li>
+ *   <li><b>单步超时（60 秒）或整体超时（180 秒）</b>——带着已有证据直接进入 ANSWER，标记
+ *       {@code truncated=true}；若最后一次模型调用来不及，就用上一轮 REFLECT 的草稿兜底；</li>
+ *   <li><b>完全没有证据</b>——不再调用模型作答，直接返回固定的 {@link #NO_EVIDENCE_ANSWER}
+ *       （spec §4：不得凭参数化知识回答）。</li>
  * </ul>
  *
- * <p>Evidence accumulates across rounds and is deduplicated by {@code chunkId} in first-seen order,
- * so the {@code [n]} numbering in the ANSWER prompt matches {@code citations[n-1]} exactly. Every
- * phase writes a {@link ReasoningStepData} (RETRIEVE included) with latency and a JSON payload; the
- * {@link StepSink} is an observer only and may be a no-op.</p>
+ * <p>证据跨轮累积，并按 {@code chunkId} 以首次出现顺序去重，因此 ANSWER 提示词里的 {@code [n]} 与
+ * {@code citations[n-1]} 严格对应。每个阶段（含 RETRIEVE）都会写入一条带耗时与 JSON 载荷的
+ * {@link ReasoningStepData}；{@link StepSink} 只是观察者，允许是空实现。</p>
  *
- * <p>Registered as a bean by {@code ChatConfig} with the production {@link ChatModelGateway}; the
- * class itself stays framework-free (no annotations, no Spring types) so the unit test can drive it
- * with a scripted fake. {@link #shutdown()} stops its step executor on context close.</p>
+ * <p>由 {@code ChatConfig} 配合生产版 {@link ChatModelGateway} 注册为 bean；本类自身不依赖框架
+ * （无注解、无 Spring 类型），单元测试才能用脚本化假实现驱动它。{@link #shutdown()} 在上下文关闭时
+ * 停掉自己的步骤执行器。</p>
  */
 public class ChatOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestrator.class);
 
-    /** Deterministic answer when retrieval produced nothing; never a model guess (spec §4). */
+    /** 检索结果为空时的固定答复；绝不让模型凭空作答（spec §4）。 */
     public static final String NO_EVIDENCE_ANSWER = "知识库中没有找到与问题相关的依据。";
 
     static final int MAX_QUERIES = 3;
@@ -96,11 +92,12 @@ public class ChatOrchestrator {
         });
     }
 
-    /** Stops the per-step executor. Called on context shutdown; a run in flight is interrupted. */
+    /** 关闭步骤执行器。上下文关闭时调用；正在运行的编排会被中断。 */
     public void shutdown() {
         executor.shutdownNow();
     }
 
+    /** 执行一次完整的四阶段编排；只有入参非法才抛校验异常，运行期失败一律降级而不外抛。 */
     public OrchestrationResult run(AgentSnapshot agent, String question, StepSink sink) {
         Objects.requireNonNull(agent, "agent");
         if (question == null || question.isBlank()) {
@@ -118,7 +115,7 @@ public class ChatOrchestrator {
         String draft = null;
         int round = 1;
 
-        // ---------------------------------------------------------------- PLAN (once)
+        // ---------------------------------------------------------------- PLAN（仅一次）
         events.onStepStart(round, Phase.PLAN);
         long planStartedAt = System.nanoTime();
         List<String> queries;
@@ -148,7 +145,7 @@ public class ChatOrchestrator {
             events.onDelta(Phase.PLAN, toJson(planned));
         }
 
-        // ---------------------------------------------------------------- RETRIEVE / REFLECT loop
+        // ---------------------------------------------------------------- RETRIEVE / REFLECT 循环
         while (!truncated) {
             if (pastDeadline(deadlineNanos)) {
                 truncated = true;
@@ -225,7 +222,7 @@ public class ChatOrchestrator {
             round++;
         }
 
-        // ---------------------------------------------------------------- ANSWER
+        // ---------------------------------------------------------------- ANSWER（作答）
         events.onStepStart(round, Phase.ANSWER);
         long startedAt = System.nanoTime();
         List<RetrievedChunk> citations = List.copyOf(evidence.values());
@@ -263,9 +260,9 @@ public class ChatOrchestrator {
         return new OrchestrationResult(answer, steps, citations, truncated, TokenUsage.ZERO);
     }
 
-    // ------------------------------------------------------------------ step execution
+    // ------------------------------------------------------------------ 步骤执行
 
-    /** Runs one model/retrieval call under the per-step timeout and rethrows its own failures. */
+    /** 在单步超时约束下执行一次模型或检索调用；本方法自身的失败会原样抛出，由调用方决定降级方式。 */
     private <T> T timed(Supplier<T> body) {
         Future<T> future = executor.submit(body::get);
         try {
@@ -286,7 +283,7 @@ public class ChatOrchestrator {
         }
     }
 
-    // ------------------------------------------------------------------ normalization
+    // ------------------------------------------------------------------ 归一化
 
     private static PlanResult normalizePlan(PlanResult raw, List<String> fallback) {
         List<String> queries = clean(raw == null ? null : raw.queries(), MAX_QUERIES);
@@ -303,7 +300,7 @@ public class ChatOrchestrator {
                 trimToNull(raw.draftAnswer()));
     }
 
-    /** Next round's queries: REFLECT's own queries, else its gaps, else re-use the current ones. */
+    /** 下一轮要用的检索语句：优先用 REFLECT 给出的语句，其次用它指出的缺口，最后才复用当前语句。 */
     private static List<String> nextQueries(ReflectResult reflect, List<String> previous) {
         if (!reflect.nextQueries().isEmpty()) {
             return reflect.nextQueries();
@@ -331,7 +328,7 @@ public class ChatOrchestrator {
         return List.copyOf(unique);
     }
 
-    // ------------------------------------------------------------------ small helpers
+    // ------------------------------------------------------------------ 小工具
 
     private static boolean pastDeadline(long deadlineNanos) {
         return System.nanoTime() - deadlineNanos > 0;
@@ -362,11 +359,11 @@ public class ChatOrchestrator {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
-            return "{}"; // a logging payload must never fail a question
+            return "{}"; // 仅用于日志的载荷，绝不能因为它让整个提问失败
         }
     }
 
-    /** Internal signal: not a business error, never escapes {@link #run}. */
+    /** 内部信号：不是业务错误，也绝不会逃出 {@link #run}。 */
     private static final class StepTimedOutException extends RuntimeException {
         private StepTimedOutException() {
             super("orchestration step timed out", null, false, false);

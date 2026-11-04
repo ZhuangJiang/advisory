@@ -3,13 +3,12 @@ package com.advisory.chat.orchestration;
 import java.util.List;
 
 /**
- * REFLECT's structured output.
+ * REFLECT 的结构化输出。
  *
- * @param sufficient   whether the accumulated snippets already support an answer
- * @param gaps         what is still missing (fed back to the next round's prompt)
- * @param nextQueries  queries for the next retrieval round, used in preference to {@code gaps}
- * @param draftAnswer  a draft built only from the snippets; the ANSWER fallback when the final call
- *                     times out
+ * @param sufficient  现有片段是否已足以作答
+ * @param gaps        仍然缺少的信息（会回填到下一轮的提示词中）
+ * @param nextQueries 下一轮检索要用的语句，优先于 {@code gaps}
+ * @param draftAnswer 仅依据现有片段写成的草稿，最后一次调用超时就用它作为 ANSWER 的兜底
  */
 public record ReflectResult(boolean sufficient, List<String> gaps, List<String> nextQueries,
                             String draftAnswer) {

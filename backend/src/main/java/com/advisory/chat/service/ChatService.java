@@ -33,21 +33,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
- * Conversations, their messages, and the SSE entry point of a question.
+ * 会话、消息，以及提问的 SSE 入口。
  *
- * <p>Request/response methods are transactional reads; {@link #start} deliberately is <em>not</em>
- * transactional. It writes the USER message and the {@code PENDING} assistant row in autocommit,
- * then hands the orchestration to a worker thread — inside a transaction the worker could start
- * before the rows are visible, which would turn an accepted question into a spurious failure.</p>
+ * <p>请求/响应类方法都是只读事务；{@link #start} 则刻意<em>不</em>加事务：它以自动提交方式写入用户消息与
+ * {@code PENDING} 的助手行，然后把编排交给工作线程。若包在事务里，工作线程可能在这些行可见之前就启动，
+ * 一个已被接受的提问会因此变成莫名其妙的失败。</p>
  *
- * <p>Access (spec §12): a {@code USER} only ever sees their own conversations and messages; an
- * {@code ADMIN} sees everything. "Not yours" and "does not exist" are both 404 — distinguishing them
- * would let a user probe for ids.</p>
+ * <p>访问控制（spec §12）：{@code USER} 只能看到自己的会话与消息，{@code ADMIN} 可以看到全部。
+ * 「不属于你」与「不存在」都返回 404——一旦区分开，用户就能靠状态码枚举出他人的会话 id。</p>
  *
- * <p>Failure semantics: the orchestrator returns an {@link OrchestrationResult} for every degraded
- * but completed run ({@code TRUNCATED}); a provider error surfaces as an {@link AppException} and is
- * stored as {@code FAILED} with the readable message. In both cases the steps that ran are
- * persisted, and the conversation lock is released in a {@code finally}.</p>
+ * <p>失败语义：降级但跑完的运行由编排器返回 {@link OrchestrationResult}（{@code TRUNCATED}）；
+ * 提供商报错则以 {@link AppException} 冒出来，被记为 {@code FAILED} 并保存可读信息。两种情况下真正跑过的步骤
+ * 都会落库，会话锁在 {@code finally} 里释放。</p>
  */
 @Service
 public class ChatService {
@@ -86,13 +83,19 @@ public class ChatService {
         this.heartbeat = heartbeat;
     }
 
-    // ------------------------------------------------------------------ conversations
+    // ------------------------------------------------------------------ 会话
 
     /**
-     * Creates a thread that is pinned to the agent's <em>current</em> version. A disabled agent
-     * cannot be used for new questions, but existing conversations of a since-disabled agent still
-     * resolve their locked snapshot and keep working.
+     * 新建会话，并把它钉在 Agent 的<em>当前</em>版本上。
+     *
+     * <p>已停用的 Agent 不能用于新建会话，但停用之前就已存在的会话仍会解析自己锁定的快照继续可用——
+     * 停用影响的是「还能不能开始新对话」，而不是「旧对话是否作废」。</p>
+     *
+     * @param agentId 目标 Agent
+     * @param userId  发起者
+     * @return 新建的会话
      */
+    /** 新建会话并钉住 Agent 的当前版本。 */
     @Transactional
     public ConversationResponse createConversation(Long agentId, Long userId, String title) {
         if (agentId == null) {
@@ -108,6 +111,7 @@ public class ChatService {
         return ConversationResponse.from(requireConversation(id, userId, UserRole.USER));
     }
 
+    /** 会话列表；普通用户只能看到自己的。 */
     @Transactional(readOnly = true)
     public PageResponse<ConversationResponse> listConversations(CurrentUser user, int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -120,6 +124,7 @@ public class ChatService {
         return PageResponse.of(items, pageIndex, pageSize, conversations.count(userId));
     }
 
+    /** 会话内的消息列表。 */
     @Transactional(readOnly = true)
     public List<MessageSummaryResponse> listMessages(Long conversationId, CurrentUser user) {
         requireConversation(conversationId, user.id(), user.role());
@@ -128,7 +133,7 @@ public class ChatService {
                 .toList();
     }
 
-    /** The reconnect path: everything a disconnected client needs, straight from the database. */
+    /** 重连路径：断线客户端需要的一切，直接从数据库读取。 */
     @Transactional(readOnly = true)
     public MessageDetailResponse getMessage(Long messageId, CurrentUser user) {
         Message message = messages.findById(messageId)
@@ -137,11 +142,17 @@ public class ChatService {
         return MessageDetailResponse.of(message, steps.findByMessage(messageId));
     }
 
-    // ------------------------------------------------------------------ ask
+    // ------------------------------------------------------------------ 提问
 
     /**
-     * Accepts one question and returns the stream. The first frame is {@code meta} with the
-     * assistant message id, sent before the worker starts so it cannot be overtaken by a step event.
+     * 接受一个问题并返回事件流。
+     *
+     * <p>首帧是携带助手消息 id 的 {@code meta}，必须在工作线程启动之前发出，否则可能被某个步骤事件抢在前面，
+     * 前端就拿不到重连用的 id 了。</p>
+     *
+     * @param conversationId 会话主键
+     * @param question       用户问题
+     * @return SSE 发射器
      */
     public SseEmitter start(Long conversationId, CurrentUser user, String content) {
         String question = content == null ? "" : content.trim();
@@ -153,8 +164,8 @@ public class ChatService {
                     "content must not exceed " + MAX_QUESTION_LENGTH + " characters");
         }
         Conversation conversation = requireConversation(conversationId, user.id(), user.role());
-        // An administrator may read any thread (that is how the audit view works) but must not answer
-        // on someone else's behalf: messages would be attributed to the wrong person (spec §8).
+        // 管理员可以读任意会话（审计视图正是如此），但不能替别人提问：
+        // 那样消息会被归到错误的人头上（spec §8）。
         if (user.role() == UserRole.ADMIN && conversation.userId() != user.id()) {
             throw new AppException(ErrorCode.FORBIDDEN, "管理员不能代替用户提问");
         }
@@ -177,7 +188,7 @@ public class ChatService {
             try {
                 workers.execute(() -> answer(conversation, assistantId, question, sink));
             } catch (RuntimeException rejected) {
-                // A saturated pool must not leave an eternal PENDING row behind.
+                // 线程池满时不能让那条 PENDING 行永远挂着，必须就地失败并释放锁。
                 messages.fail(assistantId, "系统繁忙，请稍后重试", 0);
                 throw rejected;
             }
@@ -190,7 +201,7 @@ public class ChatService {
         }
     }
 
-    // ------------------------------------------------------------------ worker
+    // ------------------------------------------------------------------ 工作线程
 
     private void answer(Conversation conversation, long assistantId, String question,
                         SseStepSink sink) {
@@ -224,11 +235,17 @@ public class ChatService {
         }
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     /**
-     * Resolves the conversation and enforces ownership. A {@code USER} asking for someone else's
-     * conversation gets the same 404 as a missing id.
+     * 取出会话并校验归属。
+     *
+     * <p>普通用户访问他人会话时得到的 404 与「id 不存在」完全一致，不给出任何可用于枚举的差异。</p>
+     *
+     * @param conversationId 会话主键
+     * @param userId         调用者
+     * @param role           调用者角色
+     * @return 会话
      */
     private Conversation requireConversation(Long conversationId, Long userId, UserRole role) {
         Conversation conversation = conversations.findById(conversationId)

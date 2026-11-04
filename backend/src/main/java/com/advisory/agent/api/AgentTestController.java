@@ -12,11 +12,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * {@code POST /api/agents/{id}/test} — trial run (spec §12).
+ * {@code POST /api/agents/{id}/test}——试运行（spec §12）。
  *
- * <p>ADMIN only (spec §8: a USER may chat with an agent but may not inspect its configuration or
- * spend provider calls on trial runs). The response is the usual envelope and the whole trace, since
- * there is no stream and nothing is stored.</p>
+ * <p>仅限管理员（spec §8：普通用户可以对话，但不能查看 Agent 配置，也不该用试运行消耗提供商调用额度）。
+ * 因为既没有流式输出也不落库，响应就是常规信封加上完整的推理轨迹。</p>
  */
 @RestController
 public class AgentTestController {
@@ -27,6 +26,7 @@ public class AgentTestController {
         this.service = service;
     }
 
+    /** 试运行指定版本，结果只出现在响应里，不落库。 */
     @PostMapping("/api/agents/{id}/test")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<AgentTestRunResponse> test(@PathVariable Long id,

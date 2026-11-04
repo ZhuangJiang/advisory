@@ -6,8 +6,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 /**
- * Body of {@code POST /api/providers}; {@code apiKey} is optional and is encrypted before it is
- * stored.
+ * {@code POST /api/providers} 的请求体。
+ *
+ * <p>{@code apiKey} 可选，落库前会先加密；内网无需鉴权的 Ollama 可以不填。</p>
  */
 public record CreateProviderRequest(
         @NotBlank(message = "name must not be blank") @Size(max = 128) String name,

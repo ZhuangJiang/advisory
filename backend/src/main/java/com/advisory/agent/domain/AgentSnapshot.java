@@ -7,17 +7,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The immutable configuration of an agent at one point in time.
+ * Agent 在某一时刻的不可变配置。
  *
- * <p>This record <em>is</em> the JSON stored in {@code agent_versions.snapshot} and the structure
- * both the live {@code agents} row and every historical version resolve to, so a conversation can
- * be replayed with exactly the settings it was started with. {@code embeddingModelId} is never sent
- * by a client: it is derived from the knowledge bases and stored redundantly to detect drift at
- * run time (spec §9).</p>
+ * <p>这个 record <em>就是</em> {@code agent_versions.snapshot} 里存的那份 JSON，也是当前 {@code agents} 行
+ * 与所有历史版本共同收敛到的结构，因此会话总能以它启动时的设置被完整重放。{@code embeddingModelId}
+ * 从不接受客户端传入：它由知识库推导并冗余存储，用于在运行时发现配置漂移（spec §9）。</p>
  *
- * <p>{@code nodeScope} maps a knowledge base id to the node ids that scope it; an empty list means
- * "the whole knowledge base". The canonical constructor defensively copies both collections so a
- * snapshot read back from the database can never be mutated by its consumer.</p>
+ * <p>{@code nodeScope} 把知识库 id 映射到限定的节点 id 列表；列表为空表示「整个知识库」。规范构造器会
+ * 防御性地复制两个集合，避免调用方改动一个刚从数据库读出的快照，却让版本内容在暗处发生变化。</p>
  */
 public record AgentSnapshot(
         String name,

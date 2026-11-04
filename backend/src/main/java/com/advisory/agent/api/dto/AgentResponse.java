@@ -7,7 +7,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
-/** Agent payload for list/detail/create/update. {@code currentVersion} is the live version number. */
+/**
+ * Agent 在列表、详情、新建与更新接口中的返回体。
+ *
+ * <p>{@code currentVersion} 是当前生效的版本号，会话据此锁定自己使用的快照。</p>
+ */
 public record AgentResponse(
         long id,
         String name,

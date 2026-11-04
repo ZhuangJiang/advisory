@@ -24,15 +24,13 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 
 /**
- * The administrator's read-only view of every conversation.
+ * 管理员对所有会话的只读视图。
  *
- * <p>Read-only is the whole contract (spec §8): an ADMIN may audit what users asked and what the
- * agent answered, but may not post on a user's behalf or alter history — there is no write method
- * here and no write endpoint in {@link com.advisory.audit.api.AuditController}.</p>
+ * <p>只读就是全部契约（spec §8）：管理员可以审计用户问了什么、Agent 答了什么，但不能替用户发言或改动历史——
+ * 这里没有任何写方法，{@link com.advisory.audit.api.AuditController} 也没有写接口。</p>
  *
- * <p>Opening a thread writes one structured log line ({@code adminAudit actor=… conversationId=…}).
- * That is the audit trail for the audit page itself: who read whose conversation, and when, ends up
- * in the application log without needing an extra table for phase one.</p>
+ * <p>打开某条会话时会写一行结构化日志（{@code adminAudit actor=… conversationId=…}），这就是审计页自身的
+ * 审计线索：谁在什么时候看了谁的会话，全部落在应用日志里，一期不必为此再加一张表。</p>
  */
 @Service
 public class AuditQueryService {
@@ -53,11 +51,16 @@ public class AuditQueryService {
     }
 
     /**
-     * One page of conversations, newest first. {@code from} is inclusive and {@code to} exclusive;
-     * a date-only value is interpreted in the server's zone, and a date-only {@code to} means the
-     * whole day (it resolves to the next midnight). A full timestamp passed as {@code to} is still
-     * exclusive, so a client building "up to and including this instant" must add one millisecond.
+     * 分页查询会话，最新的在前。
+     *
+     * <p>{@code from} 为闭区间、{@code to} 为开区间；只给日期时按服务器时区解释，且纯日期的 {@code to}
+     * 覆盖当天整天（解析为次日零点）。即便传的是完整时间戳，{@code to} 仍是开区间，所以想表达
+     * 「包含这一毫秒」的客户端需要自行加 1 毫秒。</p>
+     *
+     * @param query 筛选与分页条件
+     * @return 会话分页数据
      */
+    /** 分页查询会话，from 闭区间、to 开区间。 */
     @Transactional(readOnly = true)
     public PageResponse<AuditConversationRow> list(Long userId, Long agentId, String from, String to,
                                                    int page, int size) {
@@ -72,10 +75,15 @@ public class AuditQueryService {
     }
 
     /**
-     * One thread with every message, its persisted steps and its citations. Steps are fetched per
-     * message (N+1 on a conversation that holds a handful of answers) — cheaper to read than a
-     * grouped query and irrelevant at this scale.
+     * 读取一条会话的全部消息、每条消息落库的步骤与引用。
+     *
+     * <p>步骤按消息逐条查询（一条会话通常只有几个回答，构成 N+1），在当前规模下比写一条聚合查询更省事，
+     * 实际开销也可以忽略。</p>
+     *
+     * @param conversationId 会话主键
+     * @return 会话详情
      */
+    /** 读取会话详情并记录一行 adminAudit 日志。 */
     @Transactional(readOnly = true)
     public AuditConversationDetail detail(long conversationId, CurrentUser actor) {
         AuditConversationRow row = repository.findRow(conversationId)
@@ -92,9 +100,14 @@ public class AuditQueryService {
     }
 
     /**
-     * Accepts an epoch-millisecond string, an ISO-8601 instant / offset date-time, a local date-time
-     * (server zone) or a plain {@code yyyy-MM-dd}. The leniency is for the UI: a date picker sends a
-     * date, {@code Date#toISOString} sends a {@code Z} instant, and both must work.
+     * 解析时间参数，接受四种写法：毫秒时间戳字符串、ISO-8601 瞬时时间、带偏移的日期时间、本地日期时间
+     * （按服务器时区）以及纯 {@code yyyy-MM-dd}。
+     *
+     * <p>这份宽容是给前端用的：日期选择器只会给日期，而 {@code Date#toISOString} 给的是带 {@code Z} 的瞬时时间，
+     * 两种都必须能用，否则同一个筛选功能换个控件就失效。</p>
+     *
+     * @param raw 原始参数值
+     * @return 解析后的时刻
      */
     static Instant parseTime(String raw, boolean upperBound) {
         if (raw == null || raw.isBlank()) {

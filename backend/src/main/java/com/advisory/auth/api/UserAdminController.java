@@ -29,11 +29,18 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 
+/**
+ * 用户管理接口，仅管理员可用。
+ *
+ * <p>新建与重置密码都会把 {@code mustChangePassword} 置为 {@code true}，强制对方首次登录后自行改密；
+ * 重置密码或禁用用户会立刻吊销该用户所有未过期的 refresh token，使既有会话无法续期。</p>
+ */
 @RestController
 @RequestMapping("/api/users")
 @PreAuthorize("hasRole('ADMIN')")
 public class UserAdminController {
 
+    /** 列表接口允许的最大页长，防止一次拉走全表。 */
     private static final int MAX_PAGE_SIZE = 100;
 
     private final UserRepository userRepository;
@@ -48,6 +55,14 @@ public class UserAdminController {
         this.passwordEncoder = passwordEncoder;
     }
 
+    /**
+     * 分页查询用户列表。
+     *
+     * @param page 页码，从 0 开始，负数按 0 处理
+     * @param size 每页条数，越界时收敛到 1~{@value #MAX_PAGE_SIZE}
+     * @return 用户分页数据
+     */
+    /** 分页查询用户，页长收敛到 1~100。 */
     @GetMapping
     public ApiResponse<PageResponse<UserSummary>> list(
             @RequestParam(name = "page", defaultValue = "0") int page,
@@ -59,6 +74,13 @@ public class UserAdminController {
         return ApiResponse.ok(PageResponse.of(result));
     }
 
+    /**
+     * 新建用户。
+     *
+     * @param body 用户名、初始密码与角色
+     * @return 新建的用户摘要
+     */
+    /** 新建用户，初始密码由 BCrypt 加密并强制首次登录改密。 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<UserSummary> create(@Valid @RequestBody CreateUserRequest body) {
@@ -72,6 +94,14 @@ public class UserAdminController {
         return ApiResponse.ok(UserSummary.from(user));
     }
 
+    /**
+     * 局部更新用户：启用/禁用与重置密码均为可选，{@code null} 表示保持原值。
+     *
+     * @param id   用户主键
+     * @param body 待更新字段
+     * @return 更新后的用户摘要
+     */
+    /** 启用/禁用或重置密码；两者都会吊销该用户全部未过期的 refresh token。 */
     @PatchMapping("/{id}")
     public ApiResponse<UserSummary> patch(@PathVariable Long id, @RequestBody PatchUserRequest body) {
         User user = userRepository.findById(id)
@@ -93,7 +123,7 @@ public class UserAdminController {
 
         user = userRepository.save(user);
 
-        // A password reset or a disable invalidates all outstanding refresh tokens.
+        // 重置密码或禁用用户后，该用户所有未过期的 refresh token 立即失效，已有会话无法再续期。
         if (resetPassword || disable) {
             refreshTokenRepository.revokeAllActiveByUserId(user.getId(), Instant.now());
         }

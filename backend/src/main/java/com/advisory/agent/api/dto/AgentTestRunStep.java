@@ -3,8 +3,10 @@ package com.advisory.agent.api.dto;
 import com.advisory.chat.orchestration.ReasoningStepData;
 
 /**
- * One step of a trial run. Unlike the persisted {@code ReasoningStepResponse} it has no
- * {@code createdAt}: nothing was written, so there is no row timestamp to report.
+ * 试运行中的一步。
+ *
+ * <p>与落库版的 {@code ReasoningStepResponse} 相比少了 {@code createdAt}：本来就没有写入，
+ * 自然没有行时间戳可报。</p>
  */
 public record AgentTestRunStep(int round, String phase, String summary, String payload,
                                long latencyMs) {

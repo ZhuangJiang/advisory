@@ -5,9 +5,10 @@ import com.advisory.knowledge.domain.KnowledgeBase;
 import java.time.Instant;
 
 /**
- * Knowledge base payload. {@code documentCount} is the number of non-deleted documents currently in
- * the knowledge base (resolved during listing; always 0 for freshly created knowledge bases).
- * {@code chunkConfig} is returned as the raw JSON string of the {@code jsonb} column.
+ * 知识库的返回体。
+ *
+ * <p>{@code documentCount} 是当前未删除的文档数（列表查询时一并算出；刚创建的知识库恒为 0）。
+ * {@code chunkConfig} 原样返回 {@code jsonb} 列里的 JSON 字符串，由前端自行解析。</p>
  */
 public record KnowledgeBaseResponse(
         Long id,

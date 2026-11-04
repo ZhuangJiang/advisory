@@ -23,19 +23,18 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 
 /**
- * Builds one Spring AI {@link ChatModel} for a {@code models} row (that row's provider included).
+ * 按 {@code models} 表中的一行（含其提供商）构造一个 Spring AI {@link ChatModel}。
  *
- * <p>Same rationale as {@code EmbeddingClientFactory}: clients are constructed programmatically
- * because the provider/model is chosen per agent at runtime, which starter auto-configuration (one
- * client from static {@code application.yml}) cannot express. Both factories resolve their row
- * through {@link ModelLookup}, so the SQL exists once.</p>
+ * <p>与 {@code EmbeddingClientFactory} 同理：提供商与模型是运行时按 Agent 选定的，starter 的自动配置
+ * （从静态 {@code application.yml} 构造唯一客户端）表达不了这种关系，只能手工构造。两个工厂都通过
+ * {@link ModelLookup} 取行，SQL 因此只有一份。</p>
  *
- * <p>The agent's {@code temperature} is applied as the request default. It is passed in rather than
- * read from the row because it belongs to the agent snapshot, not to the model definition.</p>
+ * <p>Agent 的 {@code temperature} 被设为请求默认值。它是传进来的而不是从模型行读的——温度属于 Agent 快照，
+ * 不属于模型定义；同一个模型被两个 Agent 以不同温度使用时，这一点尤其重要。</p>
  */
 public class ChatClientFactory {
 
-    /** Matches the orchestrator's 60s per-step budget: the HTTP call fails before the step does. */
+    /** 与编排器单步 60 秒的预算对齐：HTTP 调用先失败，才不会让整步超时吞掉错误细节。 */
     static final Duration PROVIDER_TIMEOUT = Duration.ofSeconds(60);
 
     private final ModelLookup lookup;
@@ -47,10 +46,10 @@ public class ChatClientFactory {
     }
 
     /**
-     * @param chatModelId  the {@code models.id} the agent points at
-     * @param temperature  the agent's temperature; {@code null} leaves the provider default
-     * @throws AppException when the row is missing, is not a {@code CHAT} model, is disabled, or
-     *                      names a provider type this build cannot talk to
+     * @param chatModelId Agent 指向的 {@code models.id}
+     * @param temperature Agent 配置的温度；{@code null} 表示沿用提供商默认值
+     * @return 已绑定该模型与温度的客户端
+     * @throws AppException 模型行不存在、能力不是 {@code CHAT}、已停用，或提供商类型当前版本不支持时抛出
      */
     public ChatClient forChat(long chatModelId, BigDecimal temperature) {
         ModelRow row = lookup.find(chatModelId).orElseThrow(() -> new AppException(
@@ -79,15 +78,18 @@ public class ChatClientFactory {
         };
     }
 
-    /** The client plus the options that carry the model name and temperature on every call. */
+    /** 客户端及其调用选项：每次请求都要带上模型名与温度。 */
     public record ChatClient(ChatModel model, ChatOptions options) {
     }
 
     /**
-     * Decrypts the stored {@code api_key_cipher} (AES-GCM). A key that cannot be decrypted fails
-     * fast with a readable message instead of being sent to the provider as a bearer token; a
-     * missing key stays {@code null} and OpenAI clients substitute their own placeholder, because
-     * some OpenAI-compatible deployments run unauthenticated.
+     * 解密库中的 {@code api_key_cipher}（AES-GCM）。
+     *
+     * <p>解不开时立刻报错并给出可读提示，而不是把密文当令牌发出去——那样只会收到一个莫名其妙的 401。
+     * 未配置密钥时返回 {@code null}，由 OpenAI 客户端填入自己的占位符，因为有些兼容实现本就以无鉴权方式运行。</p>
+     *
+     * @param cipher 密文
+     * @return 明文密钥，未配置时为 {@code null}
      */
     String resolveApiKey(long providerId, String apiKeyCipher) {
         if (apiKeyCipher == null || apiKeyCipher.isBlank()) {

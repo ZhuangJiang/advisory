@@ -9,34 +9,28 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Reciprocal Rank Fusion (RRF) over ranked retrieval paths (ruling R5).
+ * 面向多路检索结果的倒数排名融合（RRF，裁决 R5）。
  *
- * <p>Every input list is one ranked path — for retrieval that is one {@code (kbId, path, query)}
- * triple: the vector or keyword result of one query for one knowledge base (up to
- * {@code 2 × |kbIds| × |queries|} lists). Rank is 1-based; each chunk gains
- * {@code 1 / (k + rank)} in every list it appears in, and the accumulated score decides the
- * fused order. Chunks are deduplicated by {@code chunkId}: a chunk found by several paths
- * (or several knowledge bases, if ids ever collided) appears exactly once with the summed
- * score.</p>
+ * <p>每个输入列表就是一条有序路径——在检索场景下即一个 {@code (kbId, path, query)} 三元组：
+ * 某个查询在某个知识库上的向量或关键词结果（最多 {@code 2 × |kbIds| × |queries|} 个列表）。
+ * 排名从 1 开始，片段每出现在一个列表中就得 {@code 1 / (k + rank)} 分，累计分决定融合后的顺序。
+ * 片段按 {@code chunkId} 去重：被多条路径（或多个知识库）命中的片段只出现一次，分数为各次之和。</p>
  *
- * <p>Because fusion only ever looks at ranks, scores from different embedding models or paths are
- * never compared — that is the whole point of RRF for cross-KB retrieval. Ties break by lower
- * {@code chunkId} so the output is stable across calls and independent of input list order.</p>
+ * <p>由于融合只看排名，不同向量模型或不同路径给出的绝对分数从不相互比较——这正是 RRF 能跨知识库使用的
+ * 原因。同分时按 {@code chunkId} 升序，保证输出稳定、且与输入列表的顺序无关。</p>
  */
 public class RrfFusion {
 
-    /** Standard RRF constant (ruling R5). */
+    /** RRF 的标准常数 k（裁决 R5）；60 是原论文的推荐值。 */
     public static final int DEFAULT_K = 60;
 
     /**
-     * Fuses the given ranked lists into one ranking.
+     * 把若干有序列表融合成一个排名。
      *
-     * @param rankedLists ranked paths, best chunk first; {@code null} lists and empty lists simply
-     *                     contribute nothing; duplicates of the same {@code chunkId} within one
-     *                     list only count for their first (best) rank
-     * @param finalTopK   maximum number of returned chunks; values below 0 are treated as 0
-     * @return chunks ordered by fused score descending, ties by lower chunkId, capped at
-     *         {@code finalTopK}
+     * @param rankedLists 各路有序结果，最相关的在前；{@code null} 或空列表不贡献任何分数；
+     *                    同一列表内重复出现的 {@code chunkId} 只按首次（最好）的排名计分
+     * @param finalTopK   返回条数上限；小于 0 按 0 处理
+     * @return 按融合分降序排列的片段，同分时 {@code chunkId} 较小者在前，最多 {@code finalTopK} 条
      */
     public List<RetrievedChunk> fuse(List<List<RetrievedChunk>> rankedLists, int finalTopK) {
         int cap = Math.max(finalTopK, 0);
@@ -58,7 +52,7 @@ public class RrfFusion {
                     rank++;
                     continue;
                 }
-                // A duplicate row inside a single list keeps its best (first) rank only.
+                // 单个列表内重复的行只保留其最好（首次）的排名，避免同一路结果被重复加分。
                 if (seenInList.add(chunk.chunkId())) {
                     fusedScores.merge(chunk.chunkId(), 1.0 / (DEFAULT_K + rank), Double::sum);
                     firstSeen.putIfAbsent(chunk.chunkId(), chunk);

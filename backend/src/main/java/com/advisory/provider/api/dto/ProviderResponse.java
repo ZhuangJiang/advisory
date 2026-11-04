@@ -6,9 +6,10 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 
 /**
- * Provider payload. The ciphertext is never a field here: {@code apiKeyMasked} is the first four
- * characters of the <em>decrypted</em> key plus {@code ****}, and the field is omitted entirely
- * ({@link JsonInclude#NON_NULL}) when the provider has no usable key.
+ * 提供商的返回体。
+ *
+ * <p>密文永远不会出现在这里：{@code apiKeyMasked} 是<em>解密后</em>密钥的前四位加 {@code ****}；
+ * 提供商没有可用密钥时该字段整体省略（{@link JsonInclude#NON_NULL}），避免前端把空串当成「已配置」。</p>
  */
 public record ProviderResponse(
         Long id,

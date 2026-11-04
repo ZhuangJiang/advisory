@@ -1,6 +1,6 @@
 package com.advisory.chat.orchestration;
 
-/** The fixed four phases of one question-answering run (spec §11); the order is not configurable. */
+/** 一次问答运行中固定的四个阶段（spec §11）；顺序不可配置。 */
 public enum Phase {
     PLAN,
     RETRIEVE,

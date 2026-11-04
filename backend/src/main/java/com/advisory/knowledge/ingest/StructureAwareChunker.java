@@ -6,22 +6,20 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 
 /**
- * Structure-aware chunker.
+ * 结构化切片器。
  *
- * <p>The Markdown is walked in document order while a heading stack produces
- * {@code "A > B > C"} paths. Fenced code blocks and Markdown tables are atomic: they become one
- * chunk even when longer than {@code maxChars}. Prose is split on sentence boundaries with a
- * {@code overlapRatio} suffix of the previous chunk repeated at the start of the next one, and every
- * prose chunk stays at or below {@code maxChars}. A trailing chunk below {@code minChars} is merged
- * or rebalanced so a section does not end with an orphan.</p>
+ * <p>按文档顺序遍历 Markdown，同时用标题栈生成 {@code "A > B > C"} 形式的路径。围栏代码块与 Markdown 表格
+ * 是原子单位：即使超过 {@code maxChars} 也整体作为一个片段，绝不从中间切断。正文按句子边界切分，
+ * 并按 {@code overlapRatio} 把上一片段的尾部重复到下一片段开头；每个正文片段都不超过 {@code maxChars}。
+ * 末尾长度低于 {@code minChars} 的片段会被合并或重新平衡，避免一个章节以孤儿片段收尾。</p>
  *
- * <p>All lengths are measured in Unicode code points and split points are always chosen on code
- * point boundaries, so surrogate pairs (emoji, rare CJK characters) are never cut in half.</p>
+ * <p>所有长度均按 Unicode 码点计算，切分点也总落在码点边界上，代理对（emoji、生僻汉字）因此不会被劈成两半。</p>
  */
 public class StructureAwareChunker {
 
     private static final String SENTENCE_TERMINATORS = "。！？；.!?;";
 
+    /** 按标题结构与句子边界切分，代码块与表格保持原子。 */
     public List<TextChunk> split(ParsedDocument doc, ChunkConfig cfg) {
         Objects.requireNonNull(cfg, "cfg");
         String markdown = doc == null ? "" : doc.markdown();
@@ -55,7 +53,7 @@ public class StructureAwareChunker {
         return chunks;
     }
 
-    // ---------------------------------------------------------------- structure walk
+    // ---------------------------------------------------------------- 结构遍历
 
     private static List<Block> toBlocks(String markdown) {
         List<Block> blocks = new ArrayList<>();
@@ -142,7 +140,7 @@ public class StructureAwareChunker {
         return MarkdownStructure.joinPath(stack);
     }
 
-    // ---------------------------------------------------------------- prose splitting
+    // ---------------------------------------------------------------- 正文切分
 
     private static List<Piece> splitProse(String path, String text, ChunkConfig cfg) {
         if (text.isEmpty()) {
@@ -169,7 +167,7 @@ public class StructureAwareChunker {
         return pieces;
     }
 
-    /** Splits into sentences that keep their terminator; oversized sentences are hard-split. */
+    /** 切成保留句末标点的句子；超长句子再按长度硬切。 */
     private static List<String> sentenceUnits(String text, int maxChars) {
         List<String> units = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -217,8 +215,12 @@ public class StructureAwareChunker {
     }
 
     /**
-     * Greedily packs sentences into groups. The first group may use the full {@code maxChars}; later
-     * groups reserve room for the overlap prefix that will be prepended.
+     * 贪心地把句子打包成组。第一组可以用满 {@code maxChars}，后续每组要预留出重叠前缀所占的空间。
+     *
+     * @param sentences 已切好的句子
+     * @param maxChars  长度上限
+     * @param overlap   需要预留的重叠长度
+     * @return 句子分组
      */
     private static List<List<String>> pack(List<String> units, ChunkConfig cfg) {
         int reserve = (int) Math.round(cfg.maxChars() * cfg.overlapRatio());
@@ -243,7 +245,7 @@ public class StructureAwareChunker {
                 }
             }
             if (group.isEmpty()) {
-                // A single sentence longer than the reserved budget; it still fits in maxChars.
+                // 单个句子就超过了预留预算，但仍在 maxChars 之内：独占一组，不再强求重叠。
                 group.add(units.get(index));
                 index++;
             }
@@ -257,9 +259,12 @@ public class StructureAwareChunker {
     }
 
     /**
-     * Prevents a section from ending with a chunk shorter than {@code minChars}: merge it into the
-     * previous group when that stays within {@code maxChars}, otherwise move sentences from the
-     * previous group until the last one is big enough.
+     * 避免章节以低于 {@code minChars} 的片段收尾：能在 {@code maxChars} 内合并就直接并入前一组，
+     * 否则从前一组搬句子过来，直到最后一段足够长。
+     *
+     * @param groups   句子分组
+     * @param minChars 片段最小长度
+     * @param maxChars 片段长度上限
      */
     private static void rebalanceTail(List<List<String>> groups, ChunkConfig cfg) {
         while (groups.size() > 1) {
@@ -288,7 +293,7 @@ public class StructureAwareChunker {
         }
     }
 
-    /** Prepends a code-point suffix of each chunk to the next chunk, bounded by {@code maxChars}. */
+    /** 把每个片段的码点后缀前置到下一片段开头，整体不超过 {@code maxChars}。 */
     private static void applyOverlap(List<String> contents, ChunkConfig cfg) {
         for (int i = 1; i < contents.size(); i++) {
             String previous = contents.get(i - 1);
@@ -306,7 +311,7 @@ public class StructureAwareChunker {
         }
     }
 
-    // ---------------------------------------------------------------- code point helpers
+    // ---------------------------------------------------------------- 码点工具
 
     static int codePointLength(String value) {
         return value.codePointCount(0, value.length());
@@ -327,7 +332,7 @@ public class StructureAwareChunker {
         return length;
     }
 
-    // ---------------------------------------------------------------- records
+    // ---------------------------------------------------------------- record 定义
 
     private record Block(String headingPath, boolean atomic, String text) {
     }

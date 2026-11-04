@@ -14,19 +14,17 @@ import java.sql.SQLException;
 import java.util.List;
 
 /**
- * Tree operations over {@code kb_nodes}. Paths are {@code ltree} labels of the form {@code n{id}};
- * a root is {@code n{id}}, a child is {@code parent.path.n{id}}.
+ * {@code kb_nodes} 上的树操作。路径是形如 {@code n{id}} 的 {@code ltree} 标签：根节点为 {@code n{id}}，
+ * 子节点为 {@code parent.path.n{id}}。
  *
- * <p>Every node read and write goes through {@link KbNodeJdbcRepository}, which returns
- * {@link KbNodeRow} projections of the stored row. A JPA {@code findById} after a JDBC write would
- * return the stale entity cached in the shared persistence context, so responses are always built
- * from a fresh JDBC read-back. The JPA repository is only used to delete the entity.</p>
+ * <p>所有节点读写都经过 {@link KbNodeJdbcRepository}，返回 {@link KbNodeRow} 投影。用 JDBC 写完再用 JPA
+ * 的 {@code findById} 会拿到共享一级缓存里的旧实体，因此响应一律基于一次全新的 JDBC 回读构造；
+ * JPA 仓储只负责删除实体这一件事。</p>
  *
- * <p>Sibling-name uniqueness is checked up front and again by the unique indexes (translated from
- * {@link DataIntegrityViolationException} to {@code KB_NODE_NAME_DUPLICATED}); the partial root index
- * covers the {@code parent_id IS NULL} case that the plain index cannot. Only PostgreSQL unique
- * violations (SQLSTATE 23505) are translated: FK, CHECK and ltree syntax errors stay server errors
- * instead of being reported as client duplicate-name conflicts.</p>
+ * <p>同级重名先做前置检查，再由唯一索引兜底（{@link DataIntegrityViolationException} 被翻译成
+ * {@code KB_NODE_NAME_DUPLICATED}）；根节点因为 {@code parent_id IS NULL}，普通唯一索引覆盖不到，
+ * 需要一个部分索引。只翻译 PostgreSQL 的唯一冲突（SQLSTATE 23505）：外键、CHECK、ltree 语法错误仍按
+ * 服务端错误上报，不能被包装成「名称重复」这种客户端错误。</p>
  */
 @Service
 public class NodeService {
@@ -47,6 +45,7 @@ public class NodeService {
         this.kbRepository = kbRepository;
     }
 
+    /** 新建节点并回填 ltree 路径。 */
     @Transactional
     public KbNodeRow createNode(Long kbId, Long parentId, String name) {
         name = validateName(name);
@@ -74,6 +73,7 @@ public class NodeService {
         }
     }
 
+    /** 移动节点，含「不能移动到自身子树」的校验。 */
     @Transactional
     public KbNodeRow moveNode(Long nodeId, Long newParentId) {
         KbNodeRow node = find(nodeId);
@@ -109,6 +109,7 @@ public class NodeService {
         return find(nodeId);
     }
 
+    /** 重命名节点，同级不可重名。 */
     @Transactional
     public KbNodeRow renameNode(Long nodeId, String name) {
         name = validateName(name);
@@ -124,6 +125,7 @@ public class NodeService {
         return find(nodeId);
     }
 
+    /** 删除叶子节点；有子节点或仍有文档时拒绝。 */
     @Transactional
     public void deleteNode(Long nodeId) {
         find(nodeId);
@@ -136,6 +138,7 @@ public class NodeService {
         nodeRepository.deleteById(nodeId);
     }
 
+    /** 列出知识库的全部节点，父节点排在子节点之前。 */
     @Transactional(readOnly = true)
     public List<KbNodeRow> listNodes(Long kbId) {
         kbRepository.findById(kbId)
@@ -144,10 +147,18 @@ public class NodeService {
     }
 
     /**
-     * Combined rename and/or move for {@code PATCH /api/nodes/{id}}. {@code name} is null for
-     * "no rename"; {@code move} distinguishes "parentId present" (including {@code null} = root)
-     * from "parentId absent".
+     * {@code PATCH /api/nodes/{id}} 的重命名与移动，二合一处理。
+     *
+     * <p>{@code name} 为 {@code null} 表示不改名；{@code move} 用来区分「显式传了 parentId」
+     * （其中 {@code null} 表示移到根）与「根本没传 parentId」——两者的语义完全不同，靠字段本身无法区分。</p>
+     *
+     * @param id    节点主键
+     * @param name  新名称，{@code null} 表示不变
+     * @param move  是否调整父节点
+     * @param parentId 目标父节点，{@code null} 表示根
+     * @return 更新后的节点
      */
+    /** 重命名与移动的组合操作。 */
     @Transactional
     public KbNodeRow updateNode(Long nodeId, String name, Long newParentId, boolean move) {
         if (name != null) {
@@ -169,12 +180,14 @@ public class NodeService {
     }
 
     /**
-     * Translates only PostgreSQL unique violations to {@code KB_NODE_NAME_DUPLICATED}; any other
-     * integrity violation (FK, CHECK, ltree syntax, ...) is rethrown unchanged.
+     * 只把 PostgreSQL 的唯一冲突翻译成 {@code KB_NODE_NAME_DUPLICATED}，其余完整性错误
+     * （外键、CHECK、ltree 语法等）原样抛出。
      *
-     * <p>The pgjdbc driver is runtime-scoped, so the exception is inspected through the standard
-     * {@link SQLException#getSQLState()} rather than the PostgreSQL-specific
-     * {@code PSQLException}/{@code ServerErrorMessage} types.</p>
+     * <p>pgjdbc 是 runtime 作用域依赖，因此用标准的 {@link SQLException#getSQLState()} 判断，
+     * 而不是引用 PostgreSQL 特有的 {@code PSQLException}/{@code ServerErrorMessage} 类型。</p>
+     *
+     * @param e 捕获到的数据完整性异常
+     * @return 是同级重名返回 {@code true}
      */
     private static RuntimeException translateDuplicateName(DataIntegrityViolationException e) {
         if (hasUniqueViolation(e)) {

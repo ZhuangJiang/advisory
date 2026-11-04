@@ -3,8 +3,12 @@ package com.advisory.provider.api.dto;
 import com.advisory.provider.domain.ModelCapability;
 
 /**
- * One entry of an import request: a remote model selected for copying into the local
- * {@code models} table, with the capability (and dimension for embeddings) the operator assigns.
+ * 导入请求中的一项：把某个远端模型复制进本地 {@code models} 表，并指定其用途
+ * （向量模型还要指定维度）。
+ *
+ * @param modelName  远端模型名
+ * @param capability 用途，由运维指定
+ * @param dimension  向量维度，仅 {@code EMBEDDING} 需要
  */
 public record ImportModelSpec(
         String modelName,

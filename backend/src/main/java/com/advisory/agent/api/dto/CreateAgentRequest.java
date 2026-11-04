@@ -10,11 +10,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@code POST /api/agents}.
+ * {@code POST /api/agents} 的请求体。
  *
- * <p>{@code embeddingModelId} is deliberately absent: it is derived from the referenced knowledge
- * bases so a client cannot make the stored value disagree with them. Optional fields fall back to
- * the schema defaults (maxRounds 3, topK 20, temperature 0.70, enabled true).</p>
+ * <p>刻意不接收 {@code embeddingModelId}：它由所引用知识库的向量模型推导得出，否则客户端就能写进一个与
+ * 知识库不一致的值，导致检索时拿两套向量做相似度比较。可选字段留空时取表默认值
+ * （maxRounds 3、topK 20、temperature 0.70、enabled true）。</p>
  */
 public record CreateAgentRequest(
         @NotBlank @Size(max = 128) String name,

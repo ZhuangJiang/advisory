@@ -6,10 +6,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 
 /**
- * JPA repository for {@link Document}, used for inserts and for the idempotent replay lookup on
- * {@code object_key}. Reads that must observe an out-of-band compare-and-set write (status, listing,
- * soft delete) go through {@code JdbcTemplate} in {@code DocumentService} instead, because a JPA
- * {@code findById} could return the stale entity from the persistence context.
+ * {@link Document} 的 JPA 仓储，只用于插入以及按 {@code object_key} 做幂等重放查询。
+ *
+ * <p>需要观察到别处比较并设置写入结果的读取（状态、列表、软删除）改为在 {@code DocumentService} 中用
+ * {@code JdbcTemplate} 完成：JPA 的 {@code findById} 可能从持久化上下文里取出旧实体。</p>
  */
 public interface DocumentRepository extends JpaRepository<Document, Long> {
 

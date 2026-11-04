@@ -10,16 +10,14 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 /**
- * JDBC access for {@code reasoning_steps}.
+ * {@code reasoning_steps} 的 JDBC 访问层。
  *
- * <p>Steps are written once the run finishes, from {@code OrchestrationResult.steps()} — the SSE
- * frames are the live view, this table is the master copy a reconnecting client reads back. A run
- * that dies mid-way therefore persists nothing partially invented: the message row keeps its
- * {@code FAILED}/{@code TRUNCATED} status and the steps that actually completed.</p>
+ * <p>步骤在运行结束后依据 {@code OrchestrationResult.steps()} 一次性写入——SSE 帧只是实时视图，
+ * 这张表才是断线客户端回读的主副本。因此中途崩掉的运行不会留下半截编造的内容：
+ * 消息行保留 {@code FAILED}/{@code TRUNCATED} 状态，步骤只保存真正完成的部分。</p>
  *
- * <p>{@code payload} is {@code {"summary": ..., "detail": "<step JSON as string>"}}: the table has
- * no summary column, and keeping {@code detail} a string means a payload that happens not to be
- * valid JSON can never fail the insert.</p>
+ * <p>{@code payload} 形如 {@code {"summary": ..., "detail": "<步骤 JSON 字符串>"}}：表里没有摘要列，
+ * 而把 {@code detail} 保持为字符串，则保证内容恰好不是合法 JSON 时也不会导致插入失败。</p>
  */
 @Repository
 public class ReasoningStepRepository {
@@ -45,6 +43,7 @@ public class ReasoningStepRepository {
         this.jdbc = jdbc;
     }
 
+    /** 批量写入一次运行的全部步骤。 */
     public void insertAll(long messageId, List<ReasoningStepData> steps) {
         if (steps == null || steps.isEmpty()) {
             return;
@@ -62,6 +61,7 @@ public class ReasoningStepRepository {
         });
     }
 
+    /** 读取某条消息的步骤，按执行顺序。 */
     public List<ReasoningStep> findByMessage(long messageId) {
         return jdbc.query("SELECT " + COLUMNS
                         + " FROM reasoning_steps WHERE message_id = ? ORDER BY id",

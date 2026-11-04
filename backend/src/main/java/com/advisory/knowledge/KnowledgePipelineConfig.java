@@ -14,28 +14,29 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Beans of the real ingest pipeline.
+ * 真实入库流水线所需的 bean。
  *
- * <p>The Spring AI gateway is only registered when {@code app.embedding.gateway} is unset (or
- * {@code real}); {@code IntegrationTestBase} sets it to {@code stub} so every integration test gets
- * the deterministic stub bean from {@code com.advisory.support.TestEmbeddingGatewayConfig} instead.
- * This property is deliberately absent from {@code application.yml}: in production the value must
- * never be set.</p>
+ * <p>只有 {@code app.embedding.gateway} 未设置（或为 {@code real}）时才注册 Spring AI 网关；
+ * {@code IntegrationTestBase} 把它设为 {@code stub}，集成测试因此统一使用
+ * {@code com.advisory.support.TestEmbeddingGatewayConfig} 里那个确定性的桩 bean。该配置项刻意不写进
+ * {@code application.yml}：生产环境永远不该设置它。</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class KnowledgePipelineConfig {
 
+    /** 基于 Tika 的文档解析器。 */
     @Bean
     public DocumentParser documentParser() {
         return new TikaDocumentParser();
     }
 
+    /** 结构化切片器。 */
     @Bean
     public StructureAwareChunker structureAwareChunker() {
         return new StructureAwareChunker();
     }
 
-    /** Programmatic Spring AI client construction site (no starter auto-configuration, ruling R1). */
+    /** Spring AI 客户端的手工构造点（不使用 starter 自动配置，裁决 R1）。 */
     @Bean
     public EmbeddingClientFactory embeddingClientFactory(JdbcTemplate jdbc,
                                                         @Value("${app.embedding.dimension}") int dimension,
@@ -46,6 +47,7 @@ public class KnowledgePipelineConfig {
     @Bean
     @ConditionalOnProperty(prefix = "app.embedding", name = "gateway", havingValue = "real",
             matchIfMissing = true)
+    /** 真实向量网关：gateway 为 stub 时让位给测试桩。 */
     public EmbeddingGateway embeddingGateway(EmbeddingClientFactory clientFactory,
                                              @Value("${app.embedding.dimension}") int dimension) {
         return new SpringAiEmbeddingGateway(clientFactory, dimension);

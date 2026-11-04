@@ -13,12 +13,11 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 
 /**
- * A knowledge base (table {@code knowledge_bases}).
+ * 知识库（表 {@code knowledge_bases}）。
  *
- * <p>Column definitions must match {@code V1__init.sql} because
- * {@code spring.jpa.hibernate.ddl-auto} is {@code validate}. {@code chunk_config} is a PostgreSQL
- * {@code jsonb} column mapped through Hibernate's JSON support; {@code embedding_model_id} is
- * intentionally nullable (models are created by a later task).</p>
+ * <p>{@code spring.jpa.hibernate.ddl-auto} 为 {@code validate}，列定义必须与 {@code V1__init.sql} 一致。
+ * {@code chunk_config} 是 PostgreSQL 的 {@code jsonb} 列，通过 Hibernate 的 JSON 支持映射；
+ * {@code embedding_model_id} 有意允许为空——知识库可以先建好，向量模型之后再指定。</p>
  */
 @Entity
 @Table(name = "knowledge_bases")
@@ -52,7 +51,7 @@ public class KnowledgeBase {
     private Instant createdAt;
 
     protected KnowledgeBase() {
-        // for JPA
+        // 供 JPA 使用
     }
 
     public KnowledgeBase(String name) {

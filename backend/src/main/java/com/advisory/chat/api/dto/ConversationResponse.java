@@ -5,11 +5,10 @@ import com.advisory.chat.domain.Conversation;
 import java.time.Instant;
 
 /**
- * Conversation row for the sidebar list. {@code agentVersion} is the locked version.
+ * 侧边栏会话列表中的一行，{@code agentVersion} 是该会话锁定的版本。
  *
- * <p>{@code userId} is exposed for one reason: an administrator's list is unfiltered (spec §8), so
- * the client must know which rows are not theirs in order to render them read-only instead of
- * offering a composer the server would reject with 403.</p>
+ * <p>暴露 {@code userId} 只有一个原因：管理员的列表不做过滤（spec §8），前端必须能识别出哪些行不属于自己，
+ * 从而渲染成只读——否则用户会在一个注定被服务端 403 拒绝的输入框里白打一段字。</p>
  */
 public record ConversationResponse(long id, long agentId, String agentName, int agentVersion,
                                    long userId, String title, Instant createdAt, Instant updatedAt) {

@@ -5,14 +5,14 @@ import com.advisory.knowledge.retrieval.RetrievedChunk;
 import java.util.List;
 
 /**
- * The outcome of one question-answering run.
+ * 一次问答运行的完整结果。
  *
- * @param answer    the final Markdown answer (never null/blank)
- * @param steps     every executed step in order; the persisted copy is the source of truth
- * @param citations the accumulated, deduplicated evidence, numbered by position in the ANSWER prompt
- * @param truncated true when the run stopped early (step/overall timeout, or two consecutive
- *                  unparsable structured answers) — the message row is stored as {@code TRUNCATED}
- * @param usage     token usage, zero when the gateway does not report it
+ * @param answer    最终答案（Markdown，永不为 {@code null} 或空白）
+ * @param steps     按执行顺序排列的全部步骤；落库的那一份才是权威数据
+ * @param citations 累积并去重后的证据，其顺序即 ANSWER 提示词中的编号
+ * @param truncated 运行是否提前结束（单步/整体超时，或连续两次结构化输出不可解析）；
+ *                  为真时消息行会存成 {@code TRUNCATED}
+ * @param usage     token 用量；网关未上报时为 0
  */
 public record OrchestrationResult(String answer, List<ReasoningStepData> steps,
                                   List<RetrievedChunk> citations, boolean truncated, TokenUsage usage) {

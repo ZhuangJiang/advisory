@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Knowledge base endpoints. Listing is open to any authenticated user; writes are ADMIN-only.
+ * 知识库接口。列表对所有已登录用户开放，写操作仅限管理员。
  */
 @RestController
 @RequestMapping("/api/knowledge-bases")
@@ -34,6 +34,7 @@ public class KnowledgeBaseController {
         this.service = service;
     }
 
+    /** 分页列出知识库，附带实时文档数。 */
     @GetMapping
     public ApiResponse<PageResponse<KnowledgeBaseResponse>> list(
             @RequestParam(name = "page", defaultValue = "0") int page,
@@ -41,6 +42,7 @@ public class KnowledgeBaseController {
         return ApiResponse.ok(service.list(page, size));
     }
 
+    /** 新建知识库，可先不指定向量模型。 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasRole('ADMIN')")
@@ -49,12 +51,13 @@ public class KnowledgeBaseController {
         return ApiResponse.ok(service.create(body, user.id()));
     }
 
-    /** One knowledge base with its live document count; 404 for an unknown id. */
+    /** 单个知识库及其实时文档数；id 不存在时返回 404。 */
     @GetMapping("/{id}")
     public ApiResponse<KnowledgeBaseResponse> get(@PathVariable Long id) {
         return ApiResponse.ok(service.get(id));
     }
 
+    /** 局部更新知识库；重建期间禁止改动向量模型与切片配置。 */
     @PatchMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<KnowledgeBaseResponse> update(@PathVariable Long id,
@@ -63,9 +66,12 @@ public class KnowledgeBaseController {
     }
 
     /**
-     * ADMIN-only full reindex. Returns 202 (the rebuild runs in the background) or 409
-     * {@code KB_REINDEXING} when one is already running.
+     * 仅限管理员的全量重建。重建在后台执行，接口立即返回 202；已有重建在跑时返回 409
+     * {@code KB_REINDEXING}。
+     *
+     * @param id 知识库主键
      */
+    /** 触发全量重建，立即返回 202，已在重建则 409。 */
     @PostMapping("/{id}/reindex")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @PreAuthorize("hasRole('ADMIN')")
@@ -74,6 +80,7 @@ public class KnowledgeBaseController {
         return ApiResponse.ok();
     }
 
+    /** 删除知识库；被 Agent 引用或正在重建时拒绝。 */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(@PathVariable Long id) {

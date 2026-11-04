@@ -24,26 +24,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Agent configuration: CRUD, automatic versioning and the cross-knowledge-base invariants.
+ * Agent 配置：增删改查、自动版本化，以及跨知识库的一致性约束。
  *
- * <p>Versioning (spec §9): creating an agent writes version 1, and every successful PATCH writes
- * {@code current_version + 1} <em>in the same transaction</em> as the live row. Creation is version
- * 1 on purpose — a conversation opened before the first edit already points at version 1, so that
- * snapshot has to exist for {@link #resolveSnapshot(Long, int)} to replay it. Versions are never
- * updated or deleted; the version list is read-only.</p>
+ * <p>版本策略（spec §9）：新建时写入版本 1，此后每次成功的 PATCH 都在<em>同一个事务</em>里同时更新当前行并
+ * 追加 {@code current_version + 1}。新建即版本 1 是有意为之——第一次编辑之前就已经打开的会话指向版本 1，
+ * 这个快照必须存在，{@link #resolveSnapshot(Long, int)} 才能重放它。版本只追加，不更新也不删除，
+ * 版本列表是只读的。</p>
  *
- * <p>Invariants enforced here (all as 400 {@code VALIDATION_FAILED}, before anything is written):
+ * <p>在此集中校验的约束（全部在写入之前以 400 {@code VALIDATION_FAILED} 拒绝）：
  * <ul>
- *   <li>{@code kbIds} is non-empty and every id exists;</li>
- *   <li>every referenced knowledge base has an embedding model and they are all the same — the
- *       shared model is written to {@code agents.embedding_model_id} for run-time drift detection;</li>
- *   <li>{@code nodeScope} keys are a subset of {@code kbIds} and every node id exists and belongs to
- *       the knowledge base it is filed under;</li>
- *   <li>{@code chatModelId} exists and is a {@code CHAT} model; the numeric ranges match the schema
- *       checks (maxRounds 1–6, topK 1–100, temperature 0–2).</li>
+ *   <li>{@code kbIds} 非空，且每个 id 都真实存在；</li>
+ *   <li>被引用的知识库都必须已配置向量模型，且模型相同——这个共同模型会写入
+ *       {@code agents.embedding_model_id}，用于运行时发现配置漂移；</li>
+ *   <li>{@code nodeScope} 的键必须是 {@code kbIds} 的子集，每个节点 id 存在且确实属于它所挂载的那个知识库；</li>
+ *   <li>{@code chatModelId} 存在且能力为 {@code CHAT}；数值范围与表约束一致
+ *       （maxRounds 1–6、topK 1–100、temperature 0–2）。</li>
  * </ul>
- * A duplicate name is a 409; deleting an agent that already has conversations is a 409 (archive
- * them first), because conversations reference the agent for their locked version.</p>
+ * 名称重复返回 409；删除仍有关联会话的 Agent 同样返回 409（需要先归档会话），因为会话要靠它锁定版本。</p>
  */
 @Service
 public class AgentService {
@@ -66,8 +63,9 @@ public class AgentService {
         this.versions = versions;
     }
 
-    // ------------------------------------------------------------------ reads
+    // ------------------------------------------------------------------ 读操作
 
+    /** 分页列出 Agent。 */
     @Transactional(readOnly = true)
     public PageResponse<AgentResponse> list(int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -78,11 +76,13 @@ public class AgentService {
         return PageResponse.of(items, pageIndex, pageSize, agents.count());
     }
 
+    /** 读取 Agent 详情。 */
     @Transactional(readOnly = true)
     public AgentResponse get(Long id) {
         return AgentResponse.from(requireAgent(id));
     }
 
+    /** 按版本号倒序返回版本历史。 */
     @Transactional(readOnly = true)
     public List<AgentVersionResponse> listVersions(Long agentId) {
         requireAgent(agentId);
@@ -92,10 +92,16 @@ public class AgentService {
     }
 
     /**
-     * The snapshot a conversation locked at {@code version}. Task 11's orchestrator consumes this; a
-     * missing version means the stored conversation points at a snapshot that does not exist and is
-     * reported as 404 rather than silently falling back to the live configuration.
+     * 取出会话锁定的那个版本的快照，供 Task 11 的编排器使用。
+     *
+     * <p>版本缺失说明会话指向了一个并不存在的快照，此时报 404 而不是悄悄退回当前配置——否则同一次对话
+     * 会在不同轮次用上不同的提示词，且没有任何痕迹可查。</p>
+     *
+     * @param agentId Agent 主键
+     * @param version 版本号
+     * @return 该版本的快照
      */
+    /** 取出会话锁定的版本快照；版本缺失报 404，不退回当前配置。 */
     @Transactional(readOnly = true)
     public AgentSnapshot resolveSnapshot(Long agentId, int version) {
         requireAgent(agentId);
@@ -104,8 +110,9 @@ public class AgentService {
                         "Agent version " + version + " not found"));
     }
 
-    // ------------------------------------------------------------------ writes
+    // ------------------------------------------------------------------ 写操作
 
+    /** 新建 Agent 并写入版本 1。 */
     @Transactional
     public AgentResponse create(CreateAgentRequest body) {
         String name = validateName(body.name());
@@ -131,7 +138,7 @@ public class AgentService {
         try {
             id = agents.insert(snapshot, description, enabled);
         } catch (DuplicateKeyException e) {
-            // ux_agents_name is the last line of defence against two concurrent creates
+            // ux_agents_name 是并发新建同名 Agent 的最后一道防线
             throw new AppException(ErrorCode.CONFLICT, "An agent named '" + name + "' already exists");
         }
         versions.insert(id, 1, snapshot);
@@ -139,10 +146,12 @@ public class AgentService {
     }
 
     /**
-     * One transaction: lock the row ({@code SELECT ... FOR UPDATE}), merge the patch onto the current
-     * configuration, validate the merged result, then update the live row and append the new
-     * version. A rejected patch writes nothing at all.
+     * 单个事务内完成：锁行（{@code SELECT ... FOR UPDATE}）→ 把补丁合并到当前配置 → 校验合并结果 →
+     * 更新当前行并追加新版本。
+     *
+     * <p>先合并再校验，保证「只改一个字段」的请求也会按最终状态检查所有约束；校验不通过则一行都不写。</p>
      */
+    /** 锁行、合并补丁、校验后更新当前行并追加新版本。 */
     @Transactional
     public AgentResponse update(Long id, UpdateAgentRequest body) {
         Agent current = agents.findByIdForUpdate(id)
@@ -189,6 +198,7 @@ public class AgentService {
         return AgentResponse.from(requireAgent(id));
     }
 
+    /** 删除 Agent；存在关联会话时返回 409。 */
     @Transactional
     public void delete(Long id) {
         requireAgent(id);
@@ -196,10 +206,10 @@ public class AgentService {
             throw new AppException(ErrorCode.CONFLICT,
                     "Agent has conversations and cannot be deleted; archive them first");
         }
-        agents.deleteById(id); // agent_versions cascade
+        agents.deleteById(id); // 版本行随级联清理
     }
 
-    // ------------------------------------------------------------------ validation
+    // ------------------------------------------------------------------ 校验
 
     private Agent requireAgent(Long id) {
         return agents.findById(id)
@@ -293,8 +303,10 @@ public class AgentService {
     }
 
     /**
-     * All knowledge bases must exist, must have an embedding model and must share it. The shared id
-     * is what the agent stores, so retrieval can never compare vectors from two different models.
+     * 所有知识库都必须存在、都已配置向量模型，并且共用同一个模型。
+     *
+     * <p>Agent 存下的就是这个共用 id；否则检索时会把两个不同模型产出的向量放在一起算相似度，
+     * 结果既不报错也毫无意义。</p>
      */
     private Long resolveEmbeddingModel(List<Long> kbIds) {
         List<AgentRepository.KbEmbedding> rows = agents.findKbEmbeddings(kbIds);
@@ -353,7 +365,7 @@ public class AgentService {
         return topK;
     }
 
-    /** Rounds to the column's scale so {@code numeric(3,2)} cannot silently round it afterwards. */
+    /** 按列的精度先行取整，避免 {@code numeric(3,2)} 在落库时静默四舍五入，导致读回的值与校验时不一致。 */
     private static BigDecimal validateTemperature(BigDecimal raw) {
         BigDecimal temperature = raw.setScale(2, RoundingMode.HALF_UP);
         if (temperature.signum() < 0 || temperature.compareTo(MAX_TEMPERATURE) > 0) {

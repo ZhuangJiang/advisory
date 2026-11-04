@@ -5,9 +5,9 @@ import com.advisory.knowledge.domain.Document;
 import java.time.Instant;
 
 /**
- * Document representation returned by upload, read, retry and list endpoints.
+ * 文档在上传、查询、重试与列表接口中的统一表示。
  *
- * <p>{@code status} and {@code errorMsg} are what the frontend polls while ingestion is running.</p>
+ * <p>前端在入库期间轮询的正是 {@code status} 与 {@code errorMsg} 这两个字段。</p>
  */
 public record DocumentResponse(
         Long id,

@@ -12,17 +12,15 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.Instant;
 
 /**
- * A stored document row (table {@code documents}).
+ * 文档行（表 {@code documents}）。
  *
- * <p>Column definitions must match {@code V1__init.sql} because
- * {@code spring.jpa.hibernate.ddl-auto} is {@code validate}. {@code status} is mapped as a
- * {@code String} on purpose: Hibernate 6 would otherwise map the {@link DocumentStatus} enum to a
- * PostgreSQL native enum type, while the frozen schema declares a {@code varchar(16)} with a CHECK
- * constraint. The enum is used by the service/worker layer and converted with {@code name()}.</p>
+ * <p>{@code spring.jpa.hibernate.ddl-auto} 为 {@code validate}，列定义必须与 {@code V1__init.sql} 一致。
+ * {@code status} 有意映射成 {@code String}：否则 Hibernate 6 会把 {@link DocumentStatus} 映射为 PostgreSQL
+ * 的原生枚举类型，而这份已冻结的表结构声明的是带 CHECK 约束的 {@code varchar(16)}，启动校验会直接失败。
+ * 枚举只在 service/worker 层使用，落库时用 {@code name()} 转换。</p>
  *
- * <p>Status writes happen through compare-and-set {@code UPDATE} statements (see
- * {@code DocumentIngestWorker}); this entity is used for inserts and for responses built from the
- * row that was just written.</p>
+ * <p>状态变更走比较并设置的 {@code UPDATE} 语句（见 {@code DocumentIngestWorker}）；这个实体只用于插入，
+ * 以及基于刚写入的那一行构造响应。</p>
  */
 @Entity
 @Table(name = "documents")
@@ -74,7 +72,7 @@ public class Document {
     private Instant updatedAt;
 
     protected Document() {
-        // for JPA
+        // 供 JPA 使用
     }
 
     public Document(Long kbId, Long nodeId, String filename, String objectKey) {

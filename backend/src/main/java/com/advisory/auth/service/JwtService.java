@@ -16,10 +16,10 @@ import java.time.Instant;
 import java.util.Date;
 
 /**
- * Issues and validates HS256 access tokens via jjwt.
+ * 基于 jjwt 签发与校验 HS256 access token。
  *
- * <p>Claims: {@code sub} = user id, {@code role}, {@code mustChangePassword}. The secret must be at
- * least 32 bytes; otherwise the bean fails fast at startup instead of producing a weak token.</p>
+ * <p>载荷约定：{@code sub} 为用户主键，{@code role} 为角色名，{@code mustChangePassword} 为强制改密标记。
+ * 密钥不足 32 字节时在启动阶段直接抛错，而不是签发弱令牌后才发现问题。</p>
  */
 @Service
 public class JwtService {
@@ -27,6 +27,11 @@ public class JwtService {
     private final SecretKey key;
     private final Duration accessTtl;
 
+    /**
+     * @param secret    签名密钥，UTF-8 编码后至少 32 字节
+     * @param accessTtl access token 有效期
+     * @throws IllegalStateException 密钥长度不足时抛出，使应用启动即失败
+     */
     public JwtService(@Value("${app.jwt.secret}") String secret,
                       @Value("${app.jwt.access-ttl}") Duration accessTtl) {
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
@@ -38,6 +43,14 @@ public class JwtService {
         this.accessTtl = accessTtl;
     }
 
+    /**
+     * 签发 access token。
+     *
+     * @param userId             用户主键
+     * @param role               平台角色
+     * @param mustChangePassword 是否仍需强制修改密码
+     * @return 紧凑格式的 JWT
+     */
     public String issueAccessToken(Long userId, UserRole role, boolean mustChangePassword) {
         Instant now = Instant.now();
         return Jwts.builder()
@@ -51,10 +64,12 @@ public class JwtService {
     }
 
     /**
-     * Parses and verifies a token, returning the caller plus the {@code mustChangePassword} flag.
+     * 校验并解析令牌，返回调用者身份与强制改密标记。
      *
-     * @throws io.jsonwebtoken.JwtException        on signature/expiry/malformed failures
-     * @throws java.lang.IllegalArgumentException on malformed claims
+     * @param token 紧凑格式的 JWT
+     * @return 解析结果
+     * @throws io.jsonwebtoken.JwtException        签名不匹配、已过期或格式非法时抛出
+     * @throws java.lang.IllegalArgumentException 载荷缺少 {@code role} 等必需声明时抛出
      */
     public ParsedToken parse(String token) {
         Claims claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();

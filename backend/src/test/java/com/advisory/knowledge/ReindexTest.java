@@ -42,14 +42,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Reindex orchestration: the endpoint is ADMIN-only and returns 202, {@code reindex_status =
- * 'REINDEXING'} blocks uploads (presign and create) with 409 {@code KB_REINDEXING}, a running
- * reindex cannot be re-triggered, a failed reindex shows up as {@code FAILED} (documents included)
- * and a later reindex recovers, rebuilding chunks with the current {@code chunk_config}, and a
- * knowledge base without an embedding model is rejected without getting stuck.
+ * 重建编排的集成测试：接口仅限管理员并返回 202；{@code reindex_status = 'REINDEXING'} 期间
+ * 上传（presign 与 create）被 409 {@code KB_REINDEXING} 挡住；正在重建时不能重复触发；
+ * 重建失败会体现为 {@code FAILED}（文档同样如此），之后再触发可以恢复；重建使用当前的
+ * {@code chunk_config} 重新切片；没有向量模型的知识库会被拒绝且不会卡在中间状态。
  *
- * <p>The gateway mock is deterministic: a {@link CountDownLatch} lets the test freeze the running
- * reindex mid-flight so {@code REINDEXING} and the 409-on-second-call asserts are not races.</p>
+ * <p>网关的 mock 是确定性的：用 {@link CountDownLatch} 把重建冻结在中途，这样「状态是 REINDEXING」
+ * 与「第二次调用返回 409」这两处断言就不会变成和完成速度赛跑的测试。</p>
  */
 class ReindexTest extends IntegrationTestBase {
 
@@ -147,10 +146,9 @@ class ReindexTest extends IntegrationTestBase {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // The reindex thread is deterministically blocked inside the first embed, so this is not a
-        // race against completion. The document has already been reset and is somewhere on the
-        // pipeline (PENDING right after the reset, PARSING/CHUNKING/EMBEDDING by now) — the point
-        // is that it is being rebuilt, not that it sits at any single intermediate step.
+        // 重建线程被确定性地卡在第一次向量化里，因此这里不存在「和完成赛跑」的问题。
+        // 此时文档已被重置，处在流水线的某个位置（刚重置时是 PENDING，现在可能是 PARSING/CHUNKING/EMBEDDING）——
+        // 要断言的是它正在被重建，而不是它恰好停在某个特定中间态。
         assertEquals("REINDEXING", reindexStatusOf(kbId));
         assertTrue(List.of("PENDING", "PARSING", "CHUNKING", "EMBEDDING").contains(statusOf(documentId)),
                 "reindex must reset and re-ingest the document");
@@ -202,9 +200,9 @@ class ReindexTest extends IntegrationTestBase {
         assertEquals("FAILED", statusOf(documentId), "the failing document must be FAILED");
         assertEquals("FAILED", reindexStatusOf(kbId), "the knowledge base must be FAILED");
 
-        // The provider recovers; a later reindex must repair documents and the knowledge base.
-        // doAnswer, not when(): re-stubbing through when() would re-invoke the mock and re-throw
-        // the previous "provider down" stub before the new answer is installed.
+        // 提供商恢复之后，再触发一次重建必须把文档与知识库都修好。
+        // 用 doAnswer 而不是 when()：通过 when() 重新打桩会先调用一次 mock，
+        // 从而在装上新答案之前就把上一版「提供商挂了」的桩触发一遍。
         doAnswer(invocation -> zeroVectors(invocation.getArgument(1)))
                 .when(embeddingGateway).embed(anyLong(), anyList());
         mockMvc.perform(post("/api/knowledge-bases/{id}/reindex", kbId)
@@ -227,7 +225,7 @@ class ReindexTest extends IntegrationTestBase {
         assertNotNull(countBefore);
         assertTrue(countBefore <= 2, "default config must keep " + countBefore + " chunks at most");
 
-        // Force a completely different chunk count for the rebuild.
+        // 强制让重建产出完全不同的片段数量，才能证明切片配置真的被重新应用。
         jdbcTemplate.update("""
                 UPDATE knowledge_bases SET chunk_config = '{"minChars": 50, "maxChars": 120, "overlapRatio": 0.1}'::jsonb
                 WHERE id = ?
@@ -273,9 +271,8 @@ class ReindexTest extends IntegrationTestBase {
     }
 
     /**
-     * A crash between the REINDEXING CAS and the background settle must not brick the knowledge
-     * base forever: startup recovery settles the stale status to FAILED (no auto-restart — the
-     * crash cause is unknown), so the admin can re-trigger the reindex.
+     * 如果崩溃发生在 REINDEXING 的 CAS 与后台收尾之间，知识库不能就此永久卡死：启动恢复会把这个残留状态
+     * 收敛为 FAILED（不自动重启——崩溃原因未知），管理员因此可以重新触发重建。
      */
     @Test
     void reindexStatusIsSettledAfterRestart() {
@@ -295,7 +292,7 @@ class ReindexTest extends IntegrationTestBase {
                 "recovery must be idempotent: nothing left to settle on the second call");
     }
 
-    /** PATCH mid-reindex would mutate the config the running rebuild is reading (ruling R6). */
+    /** 重建过程中 PATCH 会改动正在被读取的配置，必须拒绝（裁决 R6）。 */
     @Test
     void patchDuringReindexRejected() throws Exception {
         long kbId = createKb(true);
@@ -313,7 +310,7 @@ class ReindexTest extends IntegrationTestBase {
         assertEquals(originalName, nameOf(kbId), "a rejected PATCH must not change the name");
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private String nameOf(long kbId) {
         return jdbcTemplate.queryForObject(

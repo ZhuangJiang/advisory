@@ -7,11 +7,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@code PATCH /api/agents/{id}} — every field is optional; {@code null} means "leave unchanged".
+ * {@code PATCH /api/agents/{id}} 的请求体：所有字段可选，{@code null} 表示保持不变。
  *
- * <p>{@code description} may be reset by sending an empty string (normalized to {@code null}). The
- * derived {@code embeddingModelId} is recomputed from the resulting {@code kbIds}; sending it is
- * pointless and it is not part of this request.</p>
+ * <p>{@code description} 可以传空串来清空（服务端会归一化为 {@code null}）。{@code embeddingModelId}
+ * 会按更新后的 {@code kbIds} 重新推导，因此它不在本请求中，传了也不会生效。</p>
  */
 public record UpdateAgentRequest(
         @Size(max = 128) String name,
