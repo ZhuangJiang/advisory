@@ -71,7 +71,6 @@ public class KnowledgeBaseController {
      *
      * @param id 知识库主键
      */
-    /** 触发全量重建，立即返回 202，已在重建则 409。 */
     @PostMapping("/{id}/reindex")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @PreAuthorize("hasRole('ADMIN')")

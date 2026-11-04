@@ -73,7 +73,6 @@ public class AuthService {
      * @param rawToken 客户端提交的 refresh token 原文
      * @return 新的令牌对
      */
-    /** 轮换 refresh token，重放按 401 处理。 */
     @Transactional
     public TokenPair refresh(String rawToken) {
         RefreshToken stored = refreshTokenRepository.findByTokenHash(refreshTokenService.hash(rawToken))
@@ -116,7 +115,6 @@ public class AuthService {
      * @param newPassword 新密码，不得与旧密码相同
      * @return 新的令牌对
      */
-    /** 改密后清除强制改密标记并吊销存量令牌。 */
     @Transactional
     public TokenPair changePassword(Long userId, String oldPassword, String newPassword) {
         User user = userRepository.findById(userId)

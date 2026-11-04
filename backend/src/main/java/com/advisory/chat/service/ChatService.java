@@ -95,7 +95,6 @@ public class ChatService {
      * @param userId  发起者
      * @return 新建的会话
      */
-    /** 新建会话并钉住 Agent 的当前版本。 */
     @Transactional
     public ConversationResponse createConversation(Long agentId, Long userId, String title) {
         if (agentId == null) {

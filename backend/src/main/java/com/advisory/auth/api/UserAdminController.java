@@ -62,7 +62,6 @@ public class UserAdminController {
      * @param size 每页条数，越界时收敛到 1~{@value #MAX_PAGE_SIZE}
      * @return 用户分页数据
      */
-    /** 分页查询用户，页长收敛到 1~100。 */
     @GetMapping
     public ApiResponse<PageResponse<UserSummary>> list(
             @RequestParam(name = "page", defaultValue = "0") int page,
@@ -80,7 +79,6 @@ public class UserAdminController {
      * @param body 用户名、初始密码与角色
      * @return 新建的用户摘要
      */
-    /** 新建用户，初始密码由 BCrypt 加密并强制首次登录改密。 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<UserSummary> create(@Valid @RequestBody CreateUserRequest body) {
@@ -101,7 +99,6 @@ public class UserAdminController {
      * @param body 待更新字段
      * @return 更新后的用户摘要
      */
-    /** 启用/禁用或重置密码；两者都会吊销该用户全部未过期的 refresh token。 */
     @PatchMapping("/{id}")
     public ApiResponse<UserSummary> patch(@PathVariable Long id, @RequestBody PatchUserRequest body) {
         User user = userRepository.findById(id)

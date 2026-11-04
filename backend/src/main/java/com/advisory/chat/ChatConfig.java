@@ -63,7 +63,6 @@ public class ChatConfig {
      * <p>刻意有界：单副本、服务少量内部用户，无界队列会让一波提问先把数据库连接池耗尽，
      * 而 409 忙等保护是「按会话」而非全局的，拦不住这种压力。</p>
      */
-    /** 有界的编排线程池。 */
     @Bean(name = "chatWorkerExecutor", destroyMethod = "shutdownNow")
     public ExecutorService chatWorkerExecutor() {
         return Executors.newFixedThreadPool(4, namedDaemonThreads("chat-worker-"));

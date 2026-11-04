@@ -101,7 +101,6 @@ public class AgentService {
      * @param version 版本号
      * @return 该版本的快照
      */
-    /** 取出会话锁定的版本快照；版本缺失报 404，不退回当前配置。 */
     @Transactional(readOnly = true)
     public AgentSnapshot resolveSnapshot(Long agentId, int version) {
         requireAgent(agentId);
@@ -151,7 +150,6 @@ public class AgentService {
      *
      * <p>先合并再校验，保证「只改一个字段」的请求也会按最终状态检查所有约束；校验不通过则一行都不写。</p>
      */
-    /** 锁行、合并补丁、校验后更新当前行并追加新版本。 */
     @Transactional
     public AgentResponse update(Long id, UpdateAgentRequest body) {
         Agent current = agents.findByIdForUpdate(id)

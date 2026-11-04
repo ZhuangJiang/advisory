@@ -36,7 +36,6 @@ public class MinioConfig {
      * @param secretKey 密钥
      * @return MinIO 客户端
      */
-    /** 服务端内部使用的客户端。 */
     @Bean
     @Primary
     public MinioClient minioClient(@Value("${app.minio.endpoint}") String endpoint,
@@ -59,7 +58,6 @@ public class MinioConfig {
      * @param secretKey      密钥
      * @return 用于预签名的客户端
      */
-    /** 专用于给浏览器签名的客户端。 */
     @Bean
     public MinioClient minioPresignClient(@Value("${app.minio.endpoint}") String endpoint,
                                           @Value("${app.minio.public-endpoint:}") String publicEndpoint,
@@ -84,7 +82,6 @@ public class MinioConfig {
      * @param bucket      桶名
      * @return 启动回调
      */
-    /** 启动时确保存储桶存在，失败只记警告。 */
     @Bean
     public ApplicationRunner minioBucketInitializer(MinioClient minioClient,
                                                     @Value("${app.minio.bucket}") String bucket) {

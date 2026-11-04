@@ -158,7 +158,6 @@ public class NodeService {
      * @param parentId 目标父节点，{@code null} 表示根
      * @return 更新后的节点
      */
-    /** 重命名与移动的组合操作。 */
     @Transactional
     public KbNodeRow updateNode(Long nodeId, String name, Long newParentId, boolean move) {
         if (name != null) {

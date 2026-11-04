@@ -46,7 +46,6 @@ public class AuthController {
      * @param body 登录请求
      * @return access token 与 refresh token
      */
-    /** 账号密码登录，失败一律返回同一个 401 文案。 */
     @PostMapping("/login")
     public ApiResponse<TokenPair> login(@Valid @RequestBody LoginRequest body) {
         return ApiResponse.ok(authService.login(body.username(), body.password()));
@@ -58,7 +57,6 @@ public class AuthController {
      * @param body 携带 refresh token 的请求
      * @return 新的令牌对
      */
-    /** 轮换 refresh token 并下发新的令牌对。 */
     @PostMapping("/refresh")
     public ApiResponse<TokenPair> refresh(@Valid @RequestBody RefreshRequest body) {
         return ApiResponse.ok(authService.refresh(body.refreshToken()));
@@ -70,7 +68,6 @@ public class AuthController {
      * @param body 携带 refresh token 的请求
      * @return 空响应
      */
-    /** 吊销传入的 refresh token。 */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(@Valid @RequestBody RefreshRequest body) {
         authService.logout(body.refreshToken());
@@ -83,7 +80,6 @@ public class AuthController {
      * @param currentUser 由 JWT 解析出的调用者
      * @return 当前用户信息
      */
-    /** 返回当前登录用户，供前端恢复会话。 */
     @GetMapping("/me")
     public ApiResponse<MeResponse> me(CurrentUser currentUser) {
         User user = userRepository.findById(currentUser.id())
@@ -98,7 +94,6 @@ public class AuthController {
      * @param body        旧密码与新密码
      * @return 新的令牌对
      */
-    /** 自助改密，成功后旧令牌全部失效。 */
     @PostMapping("/change-password")
     public ApiResponse<TokenPair> changePassword(CurrentUser currentUser,
                                                  @Valid @RequestBody ChangePasswordRequest body) {

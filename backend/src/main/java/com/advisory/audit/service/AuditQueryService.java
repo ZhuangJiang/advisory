@@ -60,7 +60,6 @@ public class AuditQueryService {
      * @param query 筛选与分页条件
      * @return 会话分页数据
      */
-    /** 分页查询会话，from 闭区间、to 开区间。 */
     @Transactional(readOnly = true)
     public PageResponse<AuditConversationRow> list(Long userId, Long agentId, String from, String to,
                                                    int page, int size) {
@@ -83,7 +82,6 @@ public class AuditQueryService {
      * @param conversationId 会话主键
      * @return 会话详情
      */
-    /** 读取会话详情并记录一行 adminAudit 日志。 */
     @Transactional(readOnly = true)
     public AuditConversationDetail detail(long conversationId, CurrentUser actor) {
         AuditConversationRow row = repository.findRow(conversationId)

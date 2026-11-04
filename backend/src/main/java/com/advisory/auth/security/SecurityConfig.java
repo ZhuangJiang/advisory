@@ -29,7 +29,6 @@ public class SecurityConfig {
      *
      * @return BCrypt 编码器
      */
-    /** BCrypt 密码编码器。 */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -42,7 +41,6 @@ public class SecurityConfig {
      * @param objectMapper 用于写出错误信封
      * @return 过滤器实例
      */
-    /** 声明 JWT 过滤器 bean，供安全链引用。 */
     @Bean
     public JwtAuthFilter jwtAuthFilter(JwtService jwtService, ObjectMapper objectMapper) {
         return new JwtAuthFilter(jwtService, objectMapper);
@@ -57,7 +55,6 @@ public class SecurityConfig {
      * @param jwtAuthFilter 过滤器
      * @return 已禁用的注册对象
      */
-    /** 禁用 Servlet 容器的自动注册，避免过滤器执行两次。 */
     @Bean
     public FilterRegistrationBean<JwtAuthFilter> jwtAuthFilterRegistration(JwtAuthFilter jwtAuthFilter) {
         FilterRegistrationBean<JwtAuthFilter> registration = new FilterRegistrationBean<>(jwtAuthFilter);
@@ -74,7 +71,6 @@ public class SecurityConfig {
      * @return 构建好的过滤链
      * @throws Exception 构建失败时抛出
      */
-    /** 无状态安全链：放行认证入口与健康检查，其余需认证。 */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtAuthFilter jwtAuthFilter,

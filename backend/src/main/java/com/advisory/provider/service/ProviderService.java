@@ -121,7 +121,6 @@ public class ProviderService {
      * @param size 每页条数
      * @return 提供商分页数据
      */
-    /** 分页列出提供商，掩码由解密后取前四位得到。 */
     @Transactional(readOnly = true)
     public PageResponse<ProviderResponse> list(int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -280,7 +279,6 @@ public class ProviderService {
      * @param request    待导入的模型规格列表
      * @return 导入后的本地模型列表
      */
-    /** 校验请求 → 探测远端 → 仅插入未知模型名。 */
     @Transactional
     public List<ModelResponse> importModels(Long providerId, ImportModelsRequest body) {
         ModelProvider provider = find(providerId);

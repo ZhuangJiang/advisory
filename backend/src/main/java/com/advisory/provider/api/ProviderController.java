@@ -96,7 +96,6 @@ public class ProviderController {
      * @param remote 是否探测远端
      * @return 本地模型列表或远端探测结果
      */
-    /** 默认返回本地模型；remote=true 时改为探测远端实时列表。 */
     @GetMapping("/api/providers/{id}/models")
     public ApiResponse<?> listModels(@PathVariable Long id,
                                      @RequestParam(name = "remote", defaultValue = "false") boolean remote,
@@ -129,7 +128,6 @@ public class ProviderController {
      * @param request 待导入的模型规格
      * @return 导入后的本地模型列表
      */
-    /** 先探测再幂等导入，已存在的模型保持原样。 */
     @PostMapping("/api/providers/{id}/models/import")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<List<ModelResponse>> importModels(@PathVariable Long id,

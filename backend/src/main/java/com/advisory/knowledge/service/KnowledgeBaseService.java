@@ -172,7 +172,6 @@ public class KnowledgeBaseService {
      * @param id 知识库主键
      * @return 知识库详情
      */
-    /** 读取单个知识库及其实时文档数。 */
     @Transactional(readOnly = true)
     public KnowledgeBaseResponse get(Long id) {
         return jdbc.query(DETAIL_SQL, ROW_MAPPER, id)

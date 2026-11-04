@@ -52,7 +52,6 @@ public class ChunkWriter {
      * @param chunks     按文档顺序排列的片段
      * @param vectors    与片段一一对应的向量，每个长度均为 {@code app.embedding.dimension}
      */
-    /** 在一个事务内整体替换文档的片段。 */
     @Transactional
     public void replaceAll(Long documentId, Long kbId, Long nodeId,
                            List<TextChunk> chunks, List<float[]> vectors) {
