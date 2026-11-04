@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +43,11 @@ public class KnowledgeBaseService {
     private static final int MAX_NAME_LENGTH = 128;
     private static final int MAX_PAGE_SIZE = 100;
 
-    private static final String LIST_SQL = """
+    /**
+     * Shared {@code SELECT} for the list and the single-row read, so the document count (which must
+     * exclude soft-deleted rows) is computed identically in both places.
+     */
+    private static final String BASE_SQL = """
             SELECT kb.id,
                    kb.name,
                    kb.description,
@@ -56,9 +61,22 @@ public class KnowledgeBaseService {
                 SELECT count(*) AS doc_count FROM documents doc
                 WHERE doc.kb_id = kb.id AND doc.status <> 'DELETED'
             ) d ON TRUE
-            ORDER BY kb.id
-            LIMIT ? OFFSET ?
             """;
+
+    private static final String LIST_SQL = BASE_SQL + " ORDER BY kb.id LIMIT ? OFFSET ?";
+
+    private static final String DETAIL_SQL = BASE_SQL + " WHERE kb.id = ?";
+
+    private static final RowMapper<KnowledgeBaseResponse> ROW_MAPPER =
+            (rs, rowNum) -> new KnowledgeBaseResponse(
+                    rs.getLong("id"),
+                    rs.getString("name"),
+                    rs.getString("description"),
+                    (Long) rs.getObject("embedding_model_id"),
+                    rs.getString("chunk_config"),
+                    rs.getString("reindex_status"),
+                    rs.getTimestamp("created_at").toInstant(),
+                    rs.getLong("document_count"));
 
     private final KnowledgeBaseRepository repository;
     private final JdbcTemplate jdbc;
@@ -139,17 +157,23 @@ public class KnowledgeBaseService {
         Long total = jdbc.queryForObject("SELECT count(*) FROM knowledge_bases", Long.class);
         long totalCount = total == null ? 0 : total;
 
-        List<KnowledgeBaseResponse> items = jdbc.query(LIST_SQL, (rs, rowNum) -> new KnowledgeBaseResponse(
-                rs.getLong("id"),
-                rs.getString("name"),
-                rs.getString("description"),
-                (Long) rs.getObject("embedding_model_id"),
-                rs.getString("chunk_config"),
-                rs.getString("reindex_status"),
-                rs.getTimestamp("created_at").toInstant(),
-                rs.getLong("document_count")), pageSize, pageIndex * pageSize);
+        List<KnowledgeBaseResponse> items = jdbc.query(LIST_SQL, ROW_MAPPER,
+                pageSize, pageIndex * pageSize);
 
         return PageResponse.of(items, pageIndex, pageSize, totalCount);
+    }
+
+    /**
+     * One knowledge base with its live document count — what the detail page header needs.
+     *
+     * <p>Unknown ids answer 404, the same as every other read, rather than an empty object.</p>
+     */
+    @Transactional(readOnly = true)
+    public KnowledgeBaseResponse get(Long id) {
+        return jdbc.query(DETAIL_SQL, ROW_MAPPER, id)
+                .stream()
+                .findFirst()
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
     }
 
     private KnowledgeBase find(Long id) {

@@ -49,6 +49,12 @@ public class KnowledgeBaseController {
         return ApiResponse.ok(service.create(body, user.id()));
     }
 
+    /** One knowledge base with its live document count; 404 for an unknown id. */
+    @GetMapping("/{id}")
+    public ApiResponse<KnowledgeBaseResponse> get(@PathVariable Long id) {
+        return ApiResponse.ok(service.get(id));
+    }
+
     @PatchMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<KnowledgeBaseResponse> update(@PathVariable Long id,

@@ -3,6 +3,7 @@ package com.advisory.knowledge.api;
 import com.advisory.auth.security.CurrentUser;
 import com.advisory.common.api.ApiResponse;
 import com.advisory.common.api.PageResponse;
+import com.advisory.knowledge.api.dto.ChunkResponse;
 import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.api.dto.DocumentResponse;
 import com.advisory.knowledge.api.dto.PresignRequest;
@@ -65,6 +66,15 @@ public class DocumentController {
     @GetMapping("/{id}")
     public ApiResponse<DocumentResponse> get(@PathVariable Long id) {
         return ApiResponse.ok(service.get(id));
+    }
+
+    /** Stored chunks of one document, in {@code seq} order — what the UI's chunk drawer shows. */
+    @GetMapping("/{id}/chunks")
+    public ApiResponse<PageResponse<ChunkResponse>> chunks(
+            @PathVariable Long id,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size) {
+        return ApiResponse.ok(service.listChunks(id, page, size));
     }
 
     @PostMapping("/{id}/retry")

@@ -32,8 +32,8 @@ public class ChunkWriter {
     private static final String DELETE_SQL = "DELETE FROM chunks WHERE document_id = ?";
 
     private static final String INSERT_SQL = """
-            INSERT INTO chunks (document_id, kb_id, node_id, seq, content, embedding)
-            VALUES (?, ?, ?, ?, ?, ?::vector)
+            INSERT INTO chunks (document_id, kb_id, node_id, seq, heading_path, content, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?::vector)
             """;
 
     private final JdbcTemplate jdbc;
@@ -72,6 +72,7 @@ public class ChunkWriter {
                     kbId,
                     nodeId,
                     chunks.get(i).seq(),
+                    chunks.get(i).headingPath(),
                     chunks.get(i).content(),
                     toPgVectorText(vectors.get(i))});
         }

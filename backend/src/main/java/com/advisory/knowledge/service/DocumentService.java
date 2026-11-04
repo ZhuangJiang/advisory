@@ -3,6 +3,7 @@ package com.advisory.knowledge.service;
 import com.advisory.common.api.PageResponse;
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
+import com.advisory.knowledge.api.dto.ChunkResponse;
 import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.api.dto.DocumentResponse;
 import com.advisory.knowledge.api.dto.PresignRequest;
@@ -215,6 +216,38 @@ public class DocumentService {
                 "SELECT " + COLUMNS + " FROM documents" + where
                         + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
                 ROW_MAPPER, args.toArray());
+
+        return PageResponse.of(items, pageIndex, pageSize, totalCount);
+    }
+
+    /**
+     * Pages the stored chunks of one document in document order.
+     *
+     * <p>An unknown or soft-deleted document answers 404 through {@link #get}, like every other read:
+     * a deleted document has no chunks to show, and pretending it is an empty list would make a stale
+     * UI look healthy.</p>
+     */
+    public PageResponse<ChunkResponse> listChunks(Long documentId, int page, int size) {
+        get(documentId); // 404 for an unknown or deleted document, same as every other read
+        int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        int pageIndex = Math.max(page, 0);
+
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM chunks WHERE document_id = ?", Long.class, documentId);
+        long totalCount = total == null ? 0 : total;
+
+        List<ChunkResponse> items = jdbc.query("""
+                        SELECT id, seq, heading_path, content, token_count
+                        FROM chunks WHERE document_id = ?
+                        ORDER BY seq LIMIT ? OFFSET ?
+                        """,
+                (rs, rowNum) -> new ChunkResponse(
+                        rs.getLong("id"),
+                        rs.getInt("seq"),
+                        rs.getString("heading_path"),
+                        rs.getString("content"),
+                        rs.getObject("token_count", Integer.class)),
+                documentId, pageSize, pageIndex * pageSize);
 
         return PageResponse.of(items, pageIndex, pageSize, totalCount);
     }

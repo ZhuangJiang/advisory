@@ -222,7 +222,8 @@ class EmbeddingWriteTest extends IntegrationTestBase {
                 Integer.class, documentId, nodeId);
         assertEquals(0, wrongNode, "every chunk must point at the document's node");
 
-        // headingPath is not persisted; capture the list the worker handed to the writer.
+        // headingPath is now a stored column (V3), so the section trail can be asserted from the DB
+        // instead of only from the list handed to the writer.
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TextChunk>> chunkCaptor = ArgumentCaptor.forClass((Class) List.class);
         verify(chunkWriter).replaceAll(
@@ -231,6 +232,12 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         assertEquals(count, handedOver.size(), "the DB must hold exactly the chunks that were embedded");
         assertTrue(handedOver.stream().anyMatch(chunk -> !chunk.headingPath().isEmpty()),
                 "at least one chunk must carry a non-empty heading path");
+
+        Integer storedPaths = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chunks WHERE document_id = ? AND heading_path <> ''",
+                Integer.class, documentId);
+        assertEquals(count, storedPaths,
+                "V3 persists the chunker's heading path, so every section chunk can show where it came from");
     }
 
     /**
