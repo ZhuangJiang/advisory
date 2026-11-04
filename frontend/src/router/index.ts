@@ -43,6 +43,29 @@ const routes: RouteRecordRaw[] = [
         name: 'knowledge-base-detail',
         component: () => import('@/pages/knowledge/KnowledgeBaseDetail.vue'),
         meta: { nav: 'knowledge-bases' }
+      },
+      {
+        path: 'agents',
+        name: 'agents',
+        component: () => import('@/pages/agents/AgentList.vue')
+      },
+      {
+        path: 'agents/new',
+        name: 'agent-new',
+        component: () => import('@/pages/agents/AgentEdit.vue'),
+        meta: { roles: ['ADMIN'], nav: 'agents' }
+      },
+      {
+        path: 'agents/:id',
+        name: 'agent-edit',
+        component: () => import('@/pages/agents/AgentEdit.vue'),
+        meta: { roles: ['ADMIN'], nav: 'agents' }
+      },
+      {
+        path: 'providers',
+        name: 'providers',
+        component: () => import('@/pages/providers/ProviderList.vue'),
+        meta: { roles: ['ADMIN'] }
       }
     ]
   },
