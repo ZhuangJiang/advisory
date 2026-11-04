@@ -32,7 +32,13 @@ const items = computed(() =>
   NAV.filter((item) => router.hasRoute(item.name) && (!item.adminOnly || auth.isAdmin))
 )
 
-const active = computed(() => (route.name ? String(route.name) : 'home'))
+const active = computed(() => {
+  const nav = route.meta.nav as string | undefined
+  if (nav) {
+    return nav
+  }
+  return route.name ? String(route.name) : 'home'
+})
 
 async function logout(): Promise<void> {
   try {

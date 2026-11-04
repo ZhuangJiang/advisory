@@ -31,6 +31,18 @@ const routes: RouteRecordRaw[] = [
         path: '',
         name: 'home',
         component: () => import('@/pages/Home.vue')
+      },
+      {
+        path: 'knowledge-bases',
+        name: 'knowledge-bases',
+        component: () => import('@/pages/knowledge/KnowledgeBaseList.vue')
+      },
+      {
+        // `meta.nav` keeps the sidebar entry highlighted while browsing inside a knowledge base.
+        path: 'knowledge-bases/:id',
+        name: 'knowledge-base-detail',
+        component: () => import('@/pages/knowledge/KnowledgeBaseDetail.vue'),
+        meta: { nav: 'knowledge-bases' }
       }
     ]
   },
