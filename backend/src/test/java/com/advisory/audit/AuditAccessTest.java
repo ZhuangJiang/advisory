@@ -20,12 +20,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 13: the administrator audit endpoints.
+ * Task 13：管理员的审计接口。
  *
- * <p>Three things are under test, not just the happy path: USER is refused with 403 (spec §8 —
- * audit is ADMIN-only), the filters actually narrow the query (a filter that is silently dropped
- * would look identical to one that works when the database holds a single row), and opening a
- * detail writes the {@code adminAudit} log line the plan requires.</p>
+ * <p>考的不只是顺利路径，一共三件事：USER 会被 403 拒绝（spec §8——审计仅限 ADMIN）；
+ * 过滤条件确实收窄了结果集（库里只有一行数据时，「过滤被悄悄丢掉」和「过滤生效」看起来一模一样，
+ * 所以必须显式验证）；以及打开详情会按方案要求写下那条 {@code adminAudit} 日志。</p>
  */
 @ExtendWith(OutputCaptureExtension.class)
 class AuditAccessTest extends AdvisoryFixture {
@@ -125,7 +124,7 @@ class AuditAccessTest extends AdvisoryFixture {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(0));
 
-        // a date-only `to` includes the whole day (exclusive upper bound at the next midnight)
+        // 只给日期的 `to` 会包含整天（上界取次日零点，且为开区间）
         mockMvc.perform(get("/api/admin/conversations")
                         .param("agentId", String.valueOf(agentId))
                         .param("to", LocalDate.now().toString())
@@ -189,7 +188,7 @@ class AuditAccessTest extends AdvisoryFixture {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40300));
 
-        // and a USER cannot reach another user's thread through the audit path either
+        // 同理，USER 也无法借审计这条路径读到别人的会话
         mockMvc.perform(get("/api/admin/conversations/" + theirs)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
                 .andExpect(status().isForbidden());
@@ -203,7 +202,7 @@ class AuditAccessTest extends AdvisoryFixture {
                 .andExpect(jsonPath("$.code").value(40400));
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private String username(long id) {
         return jdbc.queryForObject("SELECT username FROM users WHERE id = ?", String.class, id);

@@ -8,9 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies the shared test base itself: containerized PostgreSQL is migrated by Flyway, MinIO is
- * reachable and the {@code advisory} bucket exists, and {@link IntegrationTestBase#mockMvc} is
- * injected.
+ * 验证共享测试基座本身：容器化的 PostgreSQL 已被 Flyway 迁移过、MinIO 可连通且
+ * {@code advisory} 桶存在、{@link IntegrationTestBase#mockMvc} 已被注入。
  */
 class IntegrationTestBaseTest extends IntegrationTestBase {
 

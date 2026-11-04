@@ -13,17 +13,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Deterministic proof of {@link ProviderProbe#classify(IOException)}: no network, no timing, no
- * threads — every case is a plain exception object.
+ * 对 {@link ProviderProbe#classify(IOException)} 的确定性验证：不联网、不看时序、不起线程，
+ * 每个分支都只喂一个异常对象。
  *
- * <p>The point of the two {@code isAssignableFrom} assertions is to pin down the JDK inheritance
- * the reviewer questioned: {@code HttpConnectTimeoutException < HttpTimeoutException}, so the
- * single {@code HttpTimeoutException} branch already returns {@code TIMEOUT} for a <em>connect</em>
- * timeout. Were the two unrelated, the connect-timeout assertions below would fail.</p>
+ * <p>那两条 {@code isAssignableFrom} 断言是为了钉住 JDK 的继承关系——评审时曾对此存疑：
+ * {@code HttpConnectTimeoutException < HttpTimeoutException}，所以仅凭
+ * {@code HttpTimeoutException} 一个分支，就能让 <em>连接</em> 超时也返回 {@code TIMEOUT}。
+ * 若二者其实无继承关系，下面几条连接超时的断言就会失败。</p>
  */
 class ProviderProbeClassifyTest {
 
-    // -------------------------------------------------------------- inheritance evidence
+    // -------------------------------------------------------------- 继承关系的证据
 
     @Test
     void httpConnectTimeoutExceptionIsAnHttpTimeoutExceptionInTheRunningJdk() {
@@ -33,7 +33,7 @@ class ProviderProbeClassifyTest {
                 "JDK contract: a timeout exception IS an IOException, so classify() sees it");
     }
 
-    // -------------------------------------------------------------- timeout branch
+    // -------------------------------------------------------------- 超时分支
 
     @Test
     void requestTimeoutClassifiesAsTimeout() {
@@ -55,14 +55,14 @@ class ProviderProbeClassifyTest {
 
     @Test
     void wrappedConnectTimeoutClassifiesAsTimeout() {
-        // What the JDK actually hands back from a wrapped send: the connect timeout is nested
-        // inside a plain IOException, so classify() has to walk the cause chain to find it.
+        // JDK 在包装后的 send 里实际抛出的形态：连接超时被裹在普通 IOException 里，
+        // 因此 classify() 必须沿 cause 链向下钻才能找到它。
         IOException wrapped = new IOException("send failed",
                 new HttpConnectTimeoutException("connect timed out"));
         assertEquals(ProbeResult.TIMEOUT, ProviderProbe.classify(wrapped));
     }
 
-    // -------------------------------------------------------------- unreachable branch
+    // -------------------------------------------------------------- 不可达分支
 
     @Test
     void connectRefusedClassifiesAsUnreachable() {

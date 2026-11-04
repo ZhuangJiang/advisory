@@ -9,19 +9,18 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Signing an upload URL is a local computation, so the split between the internal and the public
- * MinIO client can be pinned without a container.
+ * 签发上传 URL 是纯本地计算，因此内网客户端与公网客户端的分工不必起容器就能钉住。
  *
- * <p>This is the deployment bug the test exists for: SigV4 signs the host, so a URL signed with the
- * compose-internal name {@code minio:9000} is rejected by MinIO when a browser sends it to
- * {@code localhost:9000}. The presign client must therefore be built on the public endpoint.</p>
+ * <p>这个用例正是为了那次部署事故而存在：SigV4 会把 host 一起签进去，于是用 compose 内网名
+ * {@code minio:9000} 签出的 URL，一旦浏览器发到 {@code localhost:9000}，就会被 MinIO 拒绝。
+ * 所以预签名客户端必须建立在公网端点上。</p>
  */
 class StoragePresignTest {
 
     @Test
     void uploadUrlUsesThePublicEndpoint() {
-        // The production wiring, not a hand-built client: the test must fail if MinioConfig stops
-        // pinning the region (presigning would then call the public host before signing).
+        // 这里用的是生产装配而不是手工 new 出来的客户端：一旦 MinioConfig 不再固定 region，
+        // 本用例就会失败（否则预签名会先去请求公网 host 再签名）。
         MinioConfig config = new MinioConfig();
         MinioClient internal = config.minioClient("http://minio:9000", "key", "secret");
         MinioClient publicClient = config.minioPresignClient("http://minio:9000",

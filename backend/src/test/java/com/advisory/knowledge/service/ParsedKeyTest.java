@@ -5,8 +5,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * {@code parsedKeyFor} places the parsed Markdown next to the raw object; a root-level object key
- * (no slash) must behave like any other directory instead of becoming {@code doc.md/parsed.md}.
+ * {@code parsedKeyFor} 把解析出的 Markdown 放在原始对象旁边；根层级的对象键（不含斜杠）也必须按
+ * 目录处理，而不能拼成 {@code doc.md/parsed.md} 这种把文件名当目录的结果。
  */
 class ParsedKeyTest {
 

@@ -6,16 +6,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.UUID;
 
 /**
- * Creates one {@code model_providers} + {@code models} (EMBEDDING) row pair per test and wires it
- * into a knowledge base via {@code knowledge_bases.embedding_model_id}.
+ * 每个用例造一组 {@code model_providers} + {@code models}（EMBEDDING 类型）行，
+ * 并通过 {@code knowledge_bases.embedding_model_id} 挂到某个知识库上。
  *
- * <p>Names are unique (UUID suffix) and rows are deleted by {@link #close()} in {@code @AfterEach};
- * knowledge bases referencing the model must be deleted first ({@code ON DELETE RESTRICT}), which
- * the same cleanup block does before closing the fixture.</p>
+ * <p>名称带 UUID 后缀以保证唯一；数据行由 {@link #close()} 在 {@code @AfterEach} 中删除。
+ * 引用该模型的知识库必须先删（外键为 {@code ON DELETE RESTRICT}），
+ * 这一步由同一段清理逻辑在关闭夹具之前完成。</p>
  *
- * <p>The API key column stores a real {@link CryptoService#encrypt(String)} ciphertext — the same
- * format production writes — so the fixture never leaves plaintext in {@code api_key_cipher} and
- * any success-path test that reaches the real gateway can decrypt it.</p>
+ * <p>API Key 列存的是经 {@link CryptoService#encrypt(String)} 得到的真实密文，格式与生产环境一致：
+ * 夹具绝不把明文留在 {@code api_key_cipher} 里，而任何走到真实网关的成功路径用例也都能正常解密。</p>
  */
 public final class EmbeddingModelFixture implements AutoCloseable {
 
@@ -29,7 +28,7 @@ public final class EmbeddingModelFixture implements AutoCloseable {
         this.modelId = modelId;
     }
 
-    /** Provider type is {@code OPENAI_COMPATIBLE}; the stub gateway in tests never contacts it. */
+    /** 提供商类型取 {@code OPENAI_COMPATIBLE}；测试里的桩网关从不真的连它。 */
     public static EmbeddingModelFixture create(JdbcTemplate jdbc, CryptoService cryptoService) {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         Long providerId = jdbc.queryForObject("""
@@ -53,12 +52,12 @@ public final class EmbeddingModelFixture implements AutoCloseable {
         return modelId;
     }
 
-    /** Points {@code knowledge_bases.embedding_model_id} of {@code kbId} at this model. */
+    /** 把 {@code kbId} 对应知识库的 {@code knowledge_bases.embedding_model_id} 指向本模型。 */
     public void wire(long kbId) {
         jdbc.update("UPDATE knowledge_bases SET embedding_model_id = ? WHERE id = ?", modelId, kbId);
     }
 
-    /** Deletes the model and provider rows; referencing knowledge bases must be gone already. */
+    /** 删除模型行与提供商行；引用它的知识库此时必须已被清掉。 */
     @Override
     public void close() {
         jdbc.update("DELETE FROM models WHERE id = ?", modelId);

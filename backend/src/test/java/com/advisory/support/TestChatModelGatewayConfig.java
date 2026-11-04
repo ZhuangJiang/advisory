@@ -12,23 +12,23 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Deterministic {@link ChatModelGateway} for every {@code @SpringBootTest} context.
+ * 供每个 {@code @SpringBootTest} 上下文使用的确定性 {@link ChatModelGateway}。
  *
- * <p>Mirrors {@link TestEmbeddingGatewayConfig}: {@link IntegrationTestBase} sets
- * {@code app.chat.gateway=stub}, which keeps the real Spring AI gateway (see {@code ChatConfig})
- * unregistered, so no test can accidentally call a provider. The stub always plans one query,
- * always reports "sufficient" on the first round and always answers — which makes the orchestration
- * deterministic: one PLAN, one RETRIEVE, one REFLECT, one ANSWER per question.</p>
+ * <p>与 {@link TestEmbeddingGatewayConfig} 对称：{@link IntegrationTestBase} 把
+ * {@code app.chat.gateway} 设为 {@code stub}，真实的 Spring AI 网关（见 {@code ChatConfig}）
+ * 因此不会被注册，任何用例都不可能误调提供商。桩的行为固定：永远只规划一条查询、
+ * 第一轮就报「证据充分」、然后直接作答——于是编排完全确定：每个问题一次 PLAN、一次 RETRIEVE、
+ * 一次 REFLECT、一次 ANSWER。</p>
  *
- * <p>Tests that need a different model behaviour replace it with {@code @MockitoBean ChatModelGateway}.</p>
+ * <p>需要不同模型行为的用例可用 {@code @MockitoBean ChatModelGateway} 替换它。</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class TestChatModelGatewayConfig {
 
-    /** What the stub answers; tests assert on it to prove the stream carried the real answer. */
+    /** 桩给出的回答内容；用例据此断言流里确实带出了真实答案。 */
     public static final String STUB_ANSWER = "根据知识库片段，答案是 [1]。";
 
-    /** The single query the stub PLAN produces. */
+    /** 桩在 PLAN 阶段产出的那一条查询。 */
     public static final String STUB_QUERY = "stub-planning-query";
 
     @Bean

@@ -23,17 +23,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Shared data fixture for the chat / agent / audit integration tests: two users (ADMIN and USER),
- * one provider with a CHAT and an EMBEDDING model, one knowledge base and one agent at version 1.
+ * chat / agent / audit 三类集成用例共用的数据夹具：两个用户（ADMIN 与 USER）、
+ * 一个带 CHAT 与 EMBEDDING 模型的提供商、一个知识库，以及一个版本号为 1 的 agent。
  *
- * <p>Rows are prefixed {@code fx-} and removed after each test in dependency order — conversations,
- * then agents (their versions cascade), then knowledge bases, then the provider (models cascade).
- * Agents and knowledge bases hold {@code ON DELETE RESTRICT} references to {@code models}, so
- * deleting the provider first would fail.</p>
+ * <p>数据行的名称统一以 {@code fx-} 为前缀，每个用例结束后按依赖顺序清理：先会话，
+ * 再 agent（其版本行随级联删除），再知识库，最后才是提供商（模型行随之级联）。
+ * agent 与知识库对 {@code models} 持有 {@code ON DELETE RESTRICT} 外键，
+ * 所以若先删提供商会直接失败。</p>
  *
- * <p>The whole suite shares one database (see {@link IntegrationTestBase}), so every fixture row is
- * prefixed and cleaned up per test; a test that needs a second user or agent creates one through
- * {@link #createUser(UserRole)} / the agents API.</p>
+ * <p>整个测试套件共用一个数据库（见 {@link IntegrationTestBase}），因此每一行夹具数据都带前缀，
+ * 且逐用例清理；若某个用例还需要第二个用户或 agent，通过 {@link #createUser(UserRole)}
+ * 或 agents 接口自行创建。</p>
  */
 public abstract class AdvisoryFixture extends IntegrationTestBase {
 
@@ -100,7 +100,7 @@ public abstract class AdvisoryFixture extends IntegrationTestBase {
         jdbc.update("DELETE FROM users WHERE username LIKE 'fx-user-%'");
     }
 
-    // ------------------------------------------------------------------ rows
+    // ------------------------------------------------------------------ 数据行
 
     protected long createConversation(String token) throws Exception {
         String response = mockMvc.perform(post("/api/conversations")
@@ -112,7 +112,7 @@ public abstract class AdvisoryFixture extends IntegrationTestBase {
         return ((Number) JsonPath.read(response, "$.data.id")).longValue();
     }
 
-    /** A conversation belonging to an arbitrary user/token pair, used by the audit filters. */
+    /** 一条归属于任意「用户 + token」组合的会话，供审计过滤条件使用。 */
     protected long createConversation(String token, long agent) throws Exception {
         String response = mockMvc.perform(post("/api/conversations")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)

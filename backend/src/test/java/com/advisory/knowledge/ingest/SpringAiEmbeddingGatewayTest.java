@@ -19,10 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The gateway's own dimension guard, unit level: a fake {@link EmbeddingModel} (no Spring context,
- * no network, no database) returns vectors of a wrong or right dimension and the gateway must
- * behave as specified — mismatch = {@code EMBEDDING_DIMENSION_MISMATCH}, right dimension = pass
- * through. Also proves the 32-batch split.
+ * 网关自身的维度守卫，纯单元级：用一个假的 {@link EmbeddingModel}（无 Spring 上下文、不联网、
+ * 不碰数据库）分别返回维度过长过短的向量与正确维度的向量，网关必须按约定行事——
+ * 维度不符抛 {@code EMBEDDING_DIMENSION_MISMATCH}，维度正确则原样透传。同时验证按 32 条分批。
  */
 class SpringAiEmbeddingGatewayTest {
 
@@ -72,7 +71,7 @@ class SpringAiEmbeddingGatewayTest {
         assertEquals(List.of(32, 32, 6), batchSizes);
     }
 
-    // ------------------------------------------------------------------ fakes
+    // ------------------------------------------------------------------ 假实现
 
     @FunctionalInterface
     private interface CallFunction {
@@ -97,7 +96,7 @@ class SpringAiEmbeddingGatewayTest {
         return new EmbeddingResponse(embeddings);
     }
 
-    /** A provider-less in-memory embedding model; the constructor options are irrelevant. */
+    /** 不依赖任何提供商的内存 embedding 模型；构造参数无关紧要。 */
     private record FixedEmbeddingModel(int dimensions, CallFunction function) implements EmbeddingModel {
 
         @Override

@@ -9,8 +9,8 @@ import java.util.List;
  * 便于调用方按码分支而不是解析异常文本。</p>
  *
  * @param ok           提供商返回 2xx 且模型列表可解析时为真；若指定了模型名，还要求该名字在列表中
- * @param errorCode    {@link #NETWORK_UNREACHABLE}、{@link #AUTH_FAILED}、{@link #MODEL_NOT_FOUND}
- *                     或 {@link #TIMEOUT}；恰好在 {@code ok} 为真时为 {@code null}
+ * @param errorCode    失败原因码，取 {@link #NETWORK_UNREACHABLE}、{@link #AUTH_FAILED}、
+ *                     {@link #MODEL_NOT_FOUND} 或 {@link #TIMEOUT}；当且仅当 {@code ok} 为真时为 {@code null}
  * @param remoteModels 能读到时为远端模型名列表，否则为空列表
  */
 public record ProbeResult(boolean ok, String errorCode, List<String> remoteModels) {

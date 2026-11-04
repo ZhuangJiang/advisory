@@ -11,21 +11,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Deterministic {@link EmbeddingGateway} stub for every {@code @SpringBootTest} context: it returns
- * deterministic non-zero unit vectors derived from each text, so no test ever calls out to a real
- * provider. Tests that need other behavior replace it with {@code @MockitoBean EmbeddingGateway}.
+ * 供每个 {@code @SpringBootTest} 上下文使用的确定性 {@link EmbeddingGateway} 桩：
+ * 由文本推导出确定性的非零单位向量，任何用例都不会真的去调外部提供商。
+ * 需要其它行为的用例可用 {@code @MockitoBean EmbeddingGateway} 替换它。
  *
- * <p>Vectors are seeded by {@code text.hashCode()} — same text, same vector across calls — and
- * normalized to unit length so cosine distance against them is never NaN (a zero vector would
- * be).</p>
+ * <p>向量以 {@code text.hashCode()} 为随机种子——同样的文本在任何一次调用中都得到同样的向量——
+ * 并归一化为单位长度，保证按其计算的余弦距离永远不是 NaN（零向量就会是）。</p>
  *
- * <p>A plain {@code @Configuration} class in the scanned {@code com.advisory} tree is intentional:
- * the main application's component scan registers it for every test, which is exactly what a shared
- * test fixture needs. (A top-level {@code @TestConfiguration} would be excluded from component
- * scanning, and a nested one would only apply to a single test class.) The real Spring AI gateway
- * (see {@code KnowledgePipelineConfig}) only defines its bean when {@code app.embedding.gateway=real};
- * {@link IntegrationTestBase} sets the property to {@code stub}, so this stub is the {@code
- * EmbeddingGateway} bean in test contexts — no ambiguity, no {@code @Primary} tricks.</p>
+ * <p>刻意把它写成被扫描的 {@code com.advisory} 包下一个普通的 {@code @Configuration} 类：
+ * 主应用的组件扫描会为每个测试注册它，这正好是共享测试夹具想要的效果。
+ * （顶层 {@code @TestConfiguration} 会被组件扫描排除，嵌套的又只能作用于单个测试类。）
+ * 真实的 Spring AI 网关（见 {@code KnowledgePipelineConfig}）只在
+ * {@code app.embedding.gateway=real} 时才定义自己的 bean；而 {@link IntegrationTestBase}
+ * 把该属性设成 {@code stub}，于是测试上下文里的 {@code EmbeddingGateway} bean 就是本桩——
+ * 既不存在歧义，也不需要靠 {@code @Primary} 兜底。</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class TestEmbeddingGatewayConfig {
@@ -38,10 +37,9 @@ public class TestEmbeddingGatewayConfig {
     }
 
     /**
-     * Deterministic non-zero unit vectors of the configured length: each text seeds a
-     * {@link java.util.Random} via {@code text.hashCode()}, so the same text always embeds to the
-     * same vector (and the vector is non-degenerate — a zero vector would make pgvector's cosine
-     * distance NaN on the retrieval path). The model id is ignored.
+     * 按配置维度生成确定性的非零单位向量：每段文本用 {@code text.hashCode()} 给
+     * {@link java.util.Random} 播种，于是相同文本永远得到相同向量，且向量不会退化——
+     * 零向量会让检索链路上 pgvector 的余弦距离变成 NaN。模型 id 参数忽略不用。
      */
     static class StubEmbeddingGateway implements EmbeddingGateway {
 
@@ -74,8 +72,8 @@ public class TestEmbeddingGatewayConfig {
                 normSq += (double) value * value;
             }
             if (normSq == 0d) {
-                // Guard the (practically impossible) all-zero draw: cosine distance on a zero
-                // vector is NaN, so the vector must carry at least one non-zero component.
+                // 兜住「全零」这种几乎不可能出现的随机结果：零向量的余弦距离是 NaN，
+                // 因此向量至少要有一个非零分量。
                 vector[0] = 1f;
                 return vector;
             }

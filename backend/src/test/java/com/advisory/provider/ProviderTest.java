@@ -45,13 +45,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 9: model providers, encrypted API keys, connectivity probes and model CRUD.
+ * Task 9：模型提供商、API Key 加密、连通性探测与模型增删改查。
  *
- * <p>Probe tests run against the JDK's built-in {@link HttpServer} on an ephemeral port (no extra
- * test dependency): each failure class gets its own handler configuration so no test depends on
- * timing except the single timeout case, whose server sleeps on a daemon thread and is shut down in
- * a try-with-resources block. Rows are named with the {@code prov9-} prefix and removed in
- * {@code @AfterEach} (agents and knowledge bases first, providers cascade their models).</p>
+ * <p>探测类用例都打在 JDK 自带的 {@link HttpServer} 上，端口临时分配，不引入额外的测试依赖：
+ * 每种失败分类各配一套 handler 行为，因此除了唯一那个超时用例之外，没有任何用例依赖时序。
+ * 超时用例的服务端在守护线程上长睡，由 try-with-resources 负责中断与关闭。</p>
+ *
+ * <p>数据行统一以 {@code prov9-} 为前缀，并在 {@code @AfterEach} 里按依赖顺序清理：
+ * 先删 agent 与知识库，提供商删除时其模型行随级联一起消失。</p>
  */
 class ProviderTest extends IntegrationTestBase {
 
@@ -81,14 +82,14 @@ class ProviderTest extends IntegrationTestBase {
 
     @AfterEach
     void cleanup() {
-        // Referencing rows first: agents/kb hold ON DELETE RESTRICT references to models,
-        // models cascade off their provider.
+        // 先清引用方：agent 与知识库对 models 是 ON DELETE RESTRICT，
+        // 而 models 自身随提供商级联删除。
         jdbc.update("DELETE FROM agents WHERE name LIKE 'prov9-agent-%'");
         jdbc.update("DELETE FROM knowledge_bases WHERE name LIKE 'prov9-kb-%'");
         jdbc.update("DELETE FROM model_providers WHERE name LIKE 'prov9-%'");
     }
 
-    // ------------------------------------------------------------------ 1. key encryption
+    // ------------------------------------------------------------------ 1. 密钥加密
 
     @Test
     void apiKeyIsEncryptedAndMasked() throws Exception {
@@ -111,7 +112,7 @@ class ProviderTest extends IntegrationTestBase {
         assertFalse(listBody.contains(cipher), "response must never contain the ciphertext");
         assertFalse(provider.containsKey("apiKeyCipher"), "no response field may expose the cipher");
 
-        // Crypto contract: random IV per encryption, lossless round-trip, malformed input rejected.
+        // 加密约定：每次加密用随机 IV、往返无损、畸形输入一律拒绝。
         String first = cryptoService.encrypt(PLAINTEXT_KEY);
         String second = cryptoService.encrypt(PLAINTEXT_KEY);
         assertNotEquals(first, second, "two encryptions of the same plaintext must differ (random IV)");
@@ -123,12 +124,12 @@ class ProviderTest extends IntegrationTestBase {
         assertThrows(IllegalArgumentException.class,
                 () -> cryptoService.decrypt(Base64.getEncoder().encodeToString(new byte[4])));
         byte[] raw = Base64.getDecoder().decode(first);
-        raw[raw.length - 1] ^= 0x1; // corrupt the GCM tag: must fail loudly, never return garbage
+        raw[raw.length - 1] ^= 0x1; // 破坏 GCM 认证标签：必须显式报错，绝不能返回垃圾数据
         assertThrows(IllegalStateException.class,
                 () -> cryptoService.decrypt(Base64.getEncoder().encodeToString(raw)));
     }
 
-    // ------------------------------------------------------------------ 2. probe failure classes
+    // ------------------------------------------------------------------ 2. 探测的失败分类
 
     @Test
     void probeSucceedsAgainstHealthyServer() throws Exception {
@@ -147,11 +148,11 @@ class ProviderTest extends IntegrationTestBase {
             assertEquals(List.of("gpt-4o-mini", "text-embedding-3-small"),
                     JsonPath.read(body, "$.data.remoteModels"));
 
-            // base-url normalization: no /v1 suffix -> {base}/v1/models, key sent as bearer
+            // base-url 归一化：不带 /v1 后缀时补成 {base}/v1/models，密钥以 bearer 形式发送
             assertEquals("/v1/models", server.lastPath());
             assertEquals("Bearer probe-key-12345", server.lastAuthorization());
 
-            // remote=true returns the live remote names through the models endpoint
+            // remote=true 时经 models 接口返回远端实时模型名
             String remoteBody = mockMvc.perform(get("/api/providers/" + id + "/models")
                             .param("remote", "true")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
@@ -161,7 +162,7 @@ class ProviderTest extends IntegrationTestBase {
                     .andReturn().getResponse().getContentAsString();
             assertNull(JsonPath.read(remoteBody, "$.data.errorCode"));
 
-            // local rows (remote=false / absent) are the empty local table for this provider
+            // remote=false 或不传时只回本地行，而该提供商本地表为空
             mockMvc.perform(get("/api/providers/" + id + "/models")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                     .andExpect(status().isOk())
@@ -189,7 +190,7 @@ class ProviderTest extends IntegrationTestBase {
         int closedPort;
         try (ServerSocket socket = new ServerSocket(0)) {
             closedPort = socket.getLocalPort();
-        } // port released: nothing listens on it anymore
+        } // 端口已释放：此时无人监听
         long id = createProvider("OPENAI_COMPATIBLE", "http://127.0.0.1:" + closedPort, null);
 
         mockMvc.perform(post("/api/providers/" + id + "/test")
@@ -203,8 +204,8 @@ class ProviderTest extends IntegrationTestBase {
 
     @Test
     void probeTimesOutAgainstHangingServer() throws Exception {
-        // Handler sleeps well past the 10s probe timeout on a daemon thread; the client aborts
-        // at ~10s and the try-with-resources interrupts the sleeping handler.
+        // handler 在守护线程上睡过 10 秒的探测超时；客户端在 10 秒左右主动放弃，
+        // 随后 try-with-resources 中断仍在睡眠的 handler。
         try (FakeProviderServer server = FakeProviderServer.start("{\"data\":[]}", 200, 30_000)) {
             long id = createProvider("OPENAI_COMPATIBLE", server.baseUrl(), null);
 
@@ -239,7 +240,7 @@ class ProviderTest extends IntegrationTestBase {
         }
     }
 
-    // ------------------------------------------------------------------ 3. dimension validation
+    // ------------------------------------------------------------------ 3. 维度校验
 
     @Test
     void rejectsEmbeddingDimensionOtherThan1024() throws Exception {
@@ -286,7 +287,7 @@ class ProviderTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(40900));
     }
 
-    // ------------------------------------------------------------------ 4. references block deletes
+    // ------------------------------------------------------------------ 4. 被引用时禁止删除
 
     @Test
     void modelInUseCannotBeDeleted() throws Exception {
@@ -319,7 +320,7 @@ class ProviderTest extends IntegrationTestBase {
         assertNull(modelName(unusedModelId), "an unreferenced model must be deleted");
     }
 
-    // ---------------------------------------------------- 4b. provider delete + model patch
+    // ---------------------------------------------------- 4b. 删除提供商 + 修改模型
 
     @Test
     void providerDeleteChecksReferencesAndCascadesModels() throws Exception {
@@ -365,7 +366,7 @@ class ProviderTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.data.enabled").value(false));
         assertEquals(renamed, modelName(chatId));
 
-        // the 1024 rule follows the stored capability on updates too
+        // 更新时同样按库里已存的 capability 施加 1024 维规则
         mockMvc.perform(patch("/api/models/" + chatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -378,7 +379,7 @@ class ProviderTest extends IntegrationTestBase {
                         .content("{\"dimension\":512}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40010));
-        // an existing embedding row without a dimension change is still valid
+        // 已存在的 embedding 行只要维度不变就仍然合法
         mockMvc.perform(patch("/api/models/" + embedId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -387,7 +388,7 @@ class ProviderTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.data.enabled").value(false));
     }
 
-    // ------------------------------------------------------------------ 5. permission matrix
+    // ------------------------------------------------------------------ 5. 权限矩阵
 
     @Test
     void userCannotWriteProviders() throws Exception {
@@ -407,8 +408,7 @@ class ProviderTest extends IntegrationTestBase {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40300));
 
-        // reading the provider list is open to every authenticated user (Task 16 renders the
-        // Agent form from it)
+        // 提供商列表对所有已登录用户开放（Task 16 的 Agent 表单要读它来渲染）
         mockMvc.perform(get("/api/providers")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
                 .andExpect(status().isOk())
@@ -416,8 +416,8 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     /**
-     * {@code remote=true} spends the configured API key against an external host, so it is
-     * ADMIN-only; the local model list stays open to every authenticated user.
+     * {@code remote=true} 会拿配置好的 API Key 去打外部主机，因此仅限 ADMIN；
+     * 本地模型列表则对所有已登录用户开放。
      */
     @Test
     void remoteModelListingRequiresAdminRole() throws Exception {
@@ -431,7 +431,7 @@ class ProviderTest extends IntegrationTestBase {
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.code").value(40300));
 
-            // remote=false / absent: still just authenticated
+            // remote=false 或不传：仍只要求已登录
             mockMvc.perform(get("/api/providers/" + id + "/models")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
                     .andExpect(status().isOk())
@@ -448,12 +448,12 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     /**
-     * Global list contract: {@code page} is 0-based, {@code size} defaults to 20 and is capped at
-     * 100, rows come back ordered by id and the envelope carries {@code PageResponse} fields.
+     * 全局列表的分页约定：{@code page} 从 0 开始，{@code size} 默认 20、上限 100，
+     * 结果按 id 升序返回，外层信封携带 {@code PageResponse} 的各字段。
      */
     @Test
     void providerListIsPaginated() throws Exception {
-        // size above the cap is clamped to 100, never echoed back
+        // 超过上限的 size 被钳到 100，且不会原样回显
         String oversized = mockMvc.perform(get("/api/providers")
                         .param("size", "1000")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
@@ -494,7 +494,7 @@ class ProviderTest extends IntegrationTestBase {
         assertNotEquals(id0, id1, "page 0 and page 1 must be disjoint rows");
         assertTrue(id0 < id1, "rows are ordered by id ascending");
 
-        // the created rows are all present somewhere in the ordered listing (id asc)
+        // 新建的行在按 id 升序的列表里都能找到，位置不限
         String all = getProviders(adminToken);
         List<Object> ids = JsonPath.read(all, "$.data.content[*].id");
         List<Number> numericIds = new ArrayList<>();
@@ -506,28 +506,26 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     /**
-     * Base-URL normalization seen from the wire: trailing slash stripped, a base that already ends
-     * in {@code /v1} does not get a second {@code /v1}, and OLLAMA gets {@code /api/tags} with
-     * <em>no</em> Authorization header even though a key is configured.
+     * 从实际请求上验证 base-url 归一化：末尾斜杠被去掉；base 本身已以 {@code /v1} 结尾时不再叠加
+     * 一个 {@code /v1}；OLLAMA 走 {@code /api/tags}，即便配了密钥也 <em>不</em> 带 Authorization 头。
      */
     @Test
     void probeNormalizesBaseUrlsAndNeverSendsKeysToOllama() throws Exception {
         try (FakeProviderServer server = FakeProviderServer.start(
                 "{\"data\":[{\"id\":\"gpt-4o-mini\"}],\"models\":[{\"name\":\"llama3:latest\"}]}")) {
 
-            // trailing slash: http://host:port/  ->  /v1/models (an unstripped slash would give
-            // //v1/models)
+            // 末尾斜杠：http://host:port/ -> /v1/models（不剥掉斜杠就会拼成 //v1/models）
             long trailing = createProvider("OPENAI_COMPATIBLE", server.baseUrl() + "/", "trailing-key-111");
             probeExpectingAuthorization(server, trailing, "Bearer trailing-key-111");
             assertEquals("/v1/models", server.lastPath());
 
-            // base already ending in /v1: the /v1 suffix must not be appended twice
-            // (http://host:port/v1 + /v1/models would be the path /v1/v1/models)
+            // base 已以 /v1 结尾：/v1 后缀绝不能再叠加一次
+            // （http://host:port/v1 再加 /v1/models 会得到 /v1/v1/models 这样的路径）
             long v1Base = createProvider("OPENAI_COMPATIBLE", server.baseUrl() + "/v1", "v1-key-22222");
             probeExpectingAuthorization(server, v1Base, "Bearer v1-key-22222");
             assertEquals("/v1/models", server.lastPath());
 
-            // OLLAMA probes /api/tags and never carries the configured key
+            // OLLAMA 探测 /api/tags，并且从不携带已配置的密钥
             long ollama = createProvider("OLLAMA", server.baseUrl() + "/", "ollama-key-333");
             probeExpectingAuthorization(server, ollama, null);
             assertEquals("/api/tags", server.lastPath());
@@ -536,7 +534,7 @@ class ProviderTest extends IntegrationTestBase {
         }
     }
 
-    // ------------------------------------------------------------------ 6. import idempotency
+    // ------------------------------------------------------------------ 6. 导入幂等性
 
     @Test
     void importIsIdempotent() throws Exception {
@@ -558,7 +556,7 @@ class ProviderTest extends IntegrationTestBase {
                     .andExpect(jsonPath("$.data[0].modelName").value("llama3:latest"));
             assertEquals(3, localModelCount(id), "first import must insert three rows");
 
-            // second import of the same payload must not duplicate anything
+            // 同一份载荷导入第二次，不得产生任何重复行
             mockMvc.perform(post("/api/providers/" + id + "/models/import")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -567,7 +565,7 @@ class ProviderTest extends IntegrationTestBase {
                     .andExpect(jsonPath("$.data.length()").value(3));
             assertEquals(3, localModelCount(id), "re-import must leave exactly three rows");
 
-            // a wrong embedding dimension fails the whole import: nothing is inserted
+            // embedding 维度不对会让整次导入失败：一行都不插入
             String badEmbedding = "prov9-bad-import-" + UUID.randomUUID();
             String validChat = "prov9-good-import-" + UUID.randomUUID();
             mockMvc.perform(post("/api/providers/" + id + "/models/import")
@@ -585,7 +583,7 @@ class ProviderTest extends IntegrationTestBase {
         }
     }
 
-    // ------------------------------------------------------------------ 7. patch clears / re-encrypts
+    // ------------------------------------------------------------------ 7. 修改时清空 / 重新加密
 
     @Test
     void patchClearsAndReencryptsKey() throws Exception {
@@ -594,7 +592,7 @@ class ProviderTest extends IntegrationTestBase {
 
             probeExpectingAuthorization(server, id, "Bearer first-key-AAAA-777");
 
-            // clearing: apiKey "" wipes the stored key and the masked value disappears
+            // 清空：apiKey 传 "" 会抹掉已存密钥，掩码值也随之消失
             mockMvc.perform(patch("/api/providers/" + id)
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -609,7 +607,7 @@ class ProviderTest extends IntegrationTestBase {
                     "SELECT api_key_cipher FROM model_providers WHERE id = ?", String.class, id));
             probeExpectingAuthorization(server, id, null);
 
-            // re-encryption: a new key is stored as a fresh ciphertext and used as the bearer token
+            // 重新加密：新密钥以全新的密文入库，并作为 bearer token 发出去
             String secondKey = "second-key-BBBB-888";
             String patchBody = mockMvc.perform(patch("/api/providers/" + id)
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
@@ -625,7 +623,7 @@ class ProviderTest extends IntegrationTestBase {
             assertNotNull(cipher);
             assertNotEquals(secondKey, cipher, "the new key must be encrypted, not stored raw");
             assertEquals(secondKey, cryptoService.decrypt(cipher), "the cipher must round-trip");
-            // the PATCH response carries the mask only: no plaintext, no ciphertext, no cipher field
+            // PATCH 响应只带掩码：既无明文、也无密文，更没有密文字段
             assertFalse(patchBody.contains(secondKey), "the PATCH response must not echo the key");
             assertFalse(patchBody.contains(cipher), "the PATCH response must not echo the ciphertext");
             assertFalse(patchBody.contains("apiKeyCipher"), "no response field may expose the cipher");
@@ -636,9 +634,9 @@ class ProviderTest extends IntegrationTestBase {
         }
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
-    /** Probes the provider and asserts the Authorization header the fake server actually received. */
+    /** 探测该提供商，并断言假服务端实际收到的 Authorization 头。 */
     private void probeExpectingAuthorization(FakeProviderServer server, long providerId,
                                              String expectedAuthorization) throws Exception {
         mockMvc.perform(post("/api/providers/" + providerId + "/test")
@@ -652,9 +650,8 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     private String getProviders(String token) throws Exception {
-        // size=100 (the cap) so a lookup by id always lands on page 0 regardless of how many
-        // providers other tests left behind; the pagination contract itself is asserted by
-        // providerListIsPaginated.
+        // 取 size=100（上限），这样按 id 查找必定落在第 0 页，不受其它用例残留多少行影响；
+        // 分页约定本身由 providerListIsPaginated 单独断言。
         return mockMvc.perform(get("/api/providers")
                         .param("size", "100")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -728,10 +725,11 @@ class ProviderTest extends IntegrationTestBase {
     }
 
     /**
-     * Minimal fake provider on an ephemeral port: records the paths and Authorization headers it
-     * receives, can answer with a configurable status/body and can hang past the probe timeout.
-     * Handler threads are daemons and are interrupted on close so a sleeping handler can never
-     * keep the JVM (or the suite) alive.
+     * 跑在临时端口上的极简假提供商：记录收到的请求路径与 Authorization 头，可按配置返回
+     * 指定状态码与响应体，也能故意挂住超过探测超时。
+     *
+     * <p>handler 线程全部是守护线程，关闭时统一中断——否则一个正在长睡的 handler 会把
+     * JVM（乃至整个测试套件）拖住不退出。</p>
      */
     private static final class FakeProviderServer implements AutoCloseable {
 
@@ -791,7 +789,7 @@ class ProviderTest extends IntegrationTestBase {
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             } catch (IOException clientGone) {
-                // probe aborted (timeout) or the test closed the server: nothing to report
+                // 探测超时被中断，或用例已关闭服务端：无需上报
             } finally {
                 exchange.close();
             }

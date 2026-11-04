@@ -56,7 +56,8 @@ public class EmbeddingClientFactory {
      * {@code EmbeddingRequest(batch, client.options())} 因此总能带上配置中的模型名，
      * 不依赖提供商自行猜测的默认值。</p>
      *
-     * @param embeddingModelId {@code models.id}
+     * @param embeddingModelId 要构造客户端的模型行主键，对应 {@code models.id}；
+     *                         该行的提供商配置决定了协议、endpoint 与密钥
      * @return 客户端及其选项
      */
     public EmbeddingClient forEmbedding(long embeddingModelId) {

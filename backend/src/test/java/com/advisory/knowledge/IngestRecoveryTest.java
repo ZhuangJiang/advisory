@@ -32,14 +32,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Restart recovery: documents left in an intermediate status by a previous process are reset to
- * {@code PENDING} and re-queued, terminal rows are untouched, and a recovered document reaches
- * {@code READY} again.
+ * 重启恢复：上一个进程遗留在中间状态（intermediate）的文档会被重置为 {@code PENDING} 并重新入队，
+ * 已到终态的行不受影响，而恢复后的文档能够再次走到 {@code READY}。
  *
- * <p>{@code restartRequeuesInterruptedDocuments} calls {@code recoverInterrupted()} inside a
- * transaction that keeps the updated row lock: the worker tasks it enqueues block on their
- * compare-and-set until the test commits, so the {@code PENDING} assertion is deterministic instead
- * of racing the pipeline.</p>
+ * <p>{@code restartRequeuesInterruptedDocuments} 是在一个持有更新后行锁的事务里调用
+ * {@code recoverInterrupted()} 的：它入队的 worker 任务会在自己的 CAS 上阻塞到本事务提交，
+ * 因此那条 {@code PENDING} 断言是确定性的，而不会与流水线抢跑。</p>
  */
 class IngestRecoveryTest extends IntegrationTestBase {
 
@@ -87,7 +85,7 @@ class IngestRecoveryTest extends IntegrationTestBase {
         }
         createdKbIds.clear();
         if (embeddingFixture != null) {
-            // Knowledge bases referencing the model are deleted above (ON DELETE RESTRICT).
+            // 引用该模型的知识库已在上方删除（外键 ON DELETE RESTRICT）。
             embeddingFixture.close();
             embeddingFixture = null;
         }
@@ -101,8 +99,8 @@ class IngestRecoveryTest extends IntegrationTestBase {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         List<Long> requeued = tx.execute(status -> {
             List<Long> ids = worker.recoverInterrupted();
-            // The bulk UPDATE ... RETURNING still holds the row lock here, so the task it enqueued
-            // cannot move the row any further until this transaction commits.
+            // 此时批量 UPDATE ... RETURNING 仍持有行锁，它入队的任务在本事务提交前
+            // 无法再推动该行前进。
             assertEquals("PENDING", statusOf(documentId), "interrupted document must be reset to PENDING");
             assertTrue(worker.recoverInterrupted().isEmpty(),
                     "a second recovery pass must not reset an already PENDING row");
@@ -144,8 +142,8 @@ class IngestRecoveryTest extends IntegrationTestBase {
     private long insertDocument(long kbId, String status) {
         String name = "recovery-" + UUID.randomUUID() + ".txt";
         String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/" + name;
-        // Since Task 7 the pipeline parses the stored object, so a recovered document can only
-        // reach READY when its upload actually exists in MinIO.
+        // 自 Task 7 起，流水线会解析已存储的对象，因此只有上传物确实存在于 MinIO 中，
+        // 恢复后的文档才可能走到 READY。
         storageService.putText(objectKey, "recovery payload for " + name);
         Long id = jdbcTemplate.queryForObject("""
                 INSERT INTO documents (kb_id, filename, object_key, size, status)
@@ -191,8 +189,8 @@ class IngestRecoveryTest extends IntegrationTestBase {
                 .getResponse()
                 .getContentAsString();
         long id = ((Number) JsonPath.read(body, "$.data.id")).longValue();
-        // Since Task 7 the ingest pipeline really embeds, so a KB whose documents must reach READY
-        // needs an embedding model.
+        // 自 Task 7 起入库流水线会真正做向量化，所以要求文档走到 READY 的知识库
+        // 必须配一个 embedding 模型。
         embeddingFixture.wire(id);
         createdKbIds.add(id);
         return id;

@@ -21,11 +21,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Login / refresh / logout against a real database.
+ * 在真实数据库上验证登录 / 刷新 / 登出。
  *
- * <p>Fixtures are created per test with a random username and never touch the bootstrap
- * administrator: the container database is shared by every test class in this JVM, so mutating
- * {@code admin} would break other classes.</p>
+ * <p>夹具逐用例创建、用户名随机，且绝不改动引导管理员：本 JVM 内所有测试类共用同一个容器数据库，
+ * 一旦改了 {@code admin}，其它测试类就会被带坏。</p>
  */
 class AuthFlowTest extends IntegrationTestBase {
 

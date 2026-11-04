@@ -21,13 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Task 12: the Spring AI chat gateway's contract with the orchestrator.
+ * Task 12：Spring AI 对话网关与编排器之间的契约。
  *
- * <p>No network and no Spring context: a fake {@link ChatClientFactory} hands back a {@link ChatModel}
- * that either answers with a canned string or throws, which is exactly the two behaviours the
- * orchestrator has to survive. What is asserted here is the seam — format instructions get appended,
- * JSON becomes the requested record, and anything else becomes a degraded
- * {@link ErrorCode#VALIDATION_FAILED} rather than a crash.</p>
+ * <p>不联网、不起 Spring 上下文：假的 {@link ChatClientFactory} 返回一个 {@link ChatModel}，
+ * 要么吐出预设字符串、要么直接抛异常——这正是编排器必须扛住的那两种行为。
+ * 这里断言的是接缝处：格式指令会被附加进去，JSON 能转成目标 record，而其它任何输出都降级为
+ * {@link ErrorCode#VALIDATION_FAILED}，而不是让整个流程崩掉。</p>
  */
 class SpringAiChatModelGatewayTest {
 
@@ -84,7 +83,7 @@ class SpringAiChatModelGatewayTest {
         assertEquals(ErrorCode.INTERNAL_ERROR, failure.getCode());
     }
 
-    // ------------------------------------------------------------------ fakes
+    // ------------------------------------------------------------------ 假实现
 
     private static ChatModel answering(AtomicReference<Prompt> seen, String text) {
         return prompt -> {
@@ -93,7 +92,7 @@ class SpringAiChatModelGatewayTest {
         };
     }
 
-    /** A factory that never touches a database: the client is built from the supplied model. */
+    /** 完全不碰数据库的工厂：直接拿传入的模型构造客户端。 */
     private static SpringAiChatModelGateway gateway(ChatModel model) {
         ChatOptions options = OpenAiChatOptions.builder().model("stub-model").build();
         ChatClientFactory factory = new ChatClientFactory(null, null) {

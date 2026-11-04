@@ -21,10 +21,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The role matrix plus the user-admin endpoints.
+ * 角色权限矩阵，以及用户管理相关的管理端接口。
  *
- * <p>ADMIN fixtures are created by the test itself; the bootstrap administrator is never mutated so
- * other classes can keep relying on it.</p>
+ * <p>ADMIN 夹具由用例自行创建，引导管理员始终不改动，好让其它测试类可以放心依赖它。</p>
  */
 class PermissionMatrixTest extends IntegrationTestBase {
 
@@ -171,7 +170,7 @@ class PermissionMatrixTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // The old password no longer works.
+        // 旧密码已失效。
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"" + plainUser.getUsername() + "\",\"password\":\"" + PASSWORD + "\"}"))

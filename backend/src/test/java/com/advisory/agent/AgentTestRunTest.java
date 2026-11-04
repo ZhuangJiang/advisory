@@ -22,12 +22,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 13: {@code POST /api/agents/{id}/test} — a trial run that returns the full trace and writes
- * nothing.
+ * Task 13：{@code POST /api/agents/{id}/test}——试跑一次，返回完整轨迹但不留下任何写入。
  *
- * <p>The key assertion is the row-count one: spec §12 says the trial run reuses the orchestration but
- * must not touch {@code conversations / messages / reasoning_steps}. If a future refactor makes the
- * trial run go through {@code ChatService}, this test fails immediately.</p>
+ * <p>关键断言是那张行数表：spec §12 要求试跑复用同一套编排，但绝不能碰
+ * {@code conversations / messages / reasoning_steps}。日后若有人把试跑改成走
+ * {@code ChatService}，本用例会立刻失败。</p>
  */
 class AgentTestRunTest extends AdvisoryFixture {
 

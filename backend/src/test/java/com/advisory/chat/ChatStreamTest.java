@@ -26,11 +26,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 12: the SSE stream of one question.
+ * Task 12：单个提问的 SSE 流。
  *
- * <p>{@link RetrievalService} is mocked so the test owns the evidence (a fixed chunk) and the model
- * is the deterministic stub gateway; what is under test is the event protocol and its persistence,
- * not retrieval or prompting.</p>
+ * <p>{@link RetrievalService} 被 mock 掉，让证据（一个固定分块）由用例自己掌控，模型侧则用
+ * 确定性桩网关；本用例考的是事件协议及其持久化，而不是检索或提示词。</p>
  */
 class ChatStreamTest extends ChatFixture {
 
@@ -82,7 +81,7 @@ class ChatStreamTest extends ChatFixture {
     @Test
     void secondQuestionWhileOneIsRunningReturns409() throws Exception {
         long conversationId = createConversation(userToken);
-        // Simulates the in-flight question: the lock is exactly what start() takes.
+        // 模拟一个正在处理中的提问：这里拿的锁与 start() 拿的是同一把。
         assertTrue(lock.tryAcquire(conversationId));
         try {
             mockMvc.perform(post("/api/conversations/" + conversationId + "/messages")

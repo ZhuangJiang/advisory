@@ -26,11 +26,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * {@code GET /api/documents/{id}/chunks} — the read the knowledge-base chunk drawer depends on.
+ * {@code GET /api/documents/{id}/chunks}——知识库分块抽屉所依赖的读接口。
  *
- * <p>Rows are inserted directly rather than ingested: this test is about the read contract (order,
- * pagination, permissions, 404 semantics) and the ingest path is already covered by
- * {@link EmbeddingWriteTest}, which now also proves the heading path is persisted.</p>
+ * <p>数据行直接插入而不走入库链路：本用例考的是读接口的契约（顺序、分页、权限、404 语义），
+ * 入库链路已由 {@link EmbeddingWriteTest} 覆盖，那里同时也验证了标题路径会被持久化。</p>
  */
 class ChunkBrowseTest extends IntegrationTestBase {
 
@@ -130,7 +129,7 @@ class ChunkBrowseTest extends IntegrationTestBase {
                 .andExpect(status().isNotFound());
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private User createUser(UserRole role) {
         User user = new User(PREFIX + UUID.randomUUID(), passwordEncoder.encode(PASSWORD), role);

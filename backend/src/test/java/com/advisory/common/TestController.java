@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Test-only controller used to exercise {@code GlobalExceptionHandler} in a Web MVC slice.
+ * 仅供测试使用的控制器，用于在 Web MVC 切片里驱动 {@code GlobalExceptionHandler}。
  */
 @RestController
 @RequestMapping("/api/_test")
@@ -25,17 +25,17 @@ public class TestController {
 
     @PostMapping("/validate")
     void validate(@Valid @RequestBody CreateRequest body) {
-        // no-op: validation happens before the method body is entered
+        // 空实现：校验发生在进入方法体之前
     }
 
     @GetMapping("/page")
     void page(@RequestParam int page) {
-        // no-op: type conversion happens before the method body is entered
+        // 空实现：类型转换发生在进入方法体之前
     }
 
     @GetMapping("/required")
     void required(@RequestParam @NotBlank String name) {
-        // no-op: parameter validation happens before the method body is entered
+        // 空实现：参数校验发生在进入方法体之前
     }
 
     @GetMapping("/boom")

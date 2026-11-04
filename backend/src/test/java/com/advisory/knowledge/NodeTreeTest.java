@@ -30,9 +30,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Knowledge base + node tree behaviour: ltree path rewriting on move, sibling-name uniqueness
- * (including the partial root index), non-empty deletion guard, cross-KB parent rejection and the
- * role matrix for the read/write split.
+ * 知识库与节点树的行为：移动节点时 ltree 路径重写、同级名称唯一（含仅作用于根节点的部分索引）、
+ * 非空库禁止删除的守卫、跨知识库挂父节点被拒，以及读写分离的权限矩阵。
  */
 class NodeTreeTest extends IntegrationTestBase {
 

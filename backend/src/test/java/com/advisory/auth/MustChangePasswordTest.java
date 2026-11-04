@@ -20,9 +20,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * A user whose {@code must_change_password} flag is set (bootstrap admin, admin-created users,
- * admin password resets) may only reach {@code me} / {@code change-password} / {@code logout};
- * every other authenticated request must fail with 403 / 40301.
+ * 被置上 {@code must_change_password} 标记的用户（引导管理员、管理员新建的用户、被管理员重置过
+ * 密码的用户）只能访问 {@code me} / {@code change-password} / {@code logout}；
+ * 其它任何需要登录的请求都必须以 403 / 40301 失败。
  */
 class MustChangePasswordTest extends IntegrationTestBase {
 
@@ -67,21 +67,21 @@ class MustChangePasswordTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mustChangePassword").value(false));
 
-        // The password-change gate no longer intercepts, so the (now real) knowledge-base endpoint
-        // responds 200 instead of 403/40301.
+        // 改密拦截已解除，于是这个（现在是真实的）知识库接口返回 200，
+        // 而不是 403/40301。
         mockMvc.perform(get("/api/knowledge-bases")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + changed.accessToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // Refresh tokens issued before the change are revoked.
+        // 改密之前签发的 refresh token 已被吊销。
         mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + login.refreshToken() + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(40100));
 
-        // The freshly issued refresh token still works.
+        // 刚签发的那枚 refresh token 依然可用。
         mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + changed.refreshToken() + "\"}"))
@@ -106,7 +106,7 @@ class MustChangePasswordTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(40000))
                 .andExpect(jsonPath("$.data").doesNotExist());
 
-        // Still gated: the failed attempt must not clear the flag.
+        // 仍处在拦截中：这次失败的尝试不得把标记清掉。
         mockMvc.perform(get("/api/knowledge-bases").header(HttpHeaders.AUTHORIZATION, bearer))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40301));

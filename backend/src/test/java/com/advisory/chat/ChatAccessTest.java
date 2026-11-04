@@ -28,12 +28,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 12: conversation isolation and the reconnect path.
+ * Task 12：会话隔离与断线重连路径。
  *
- * <p>The third case is the important one: it starts a real run through {@link ChatService} but never
- * hands the emitter to a servlet container, so every {@code send} is buffered and never delivered —
- * a client that vanished right after the first frame. The answer and all eight steps must still be
- * in the database and reachable through {@code GET /api/messages/{id}}.</p>
+ * <p>第三种情形才是重点：它经 {@link ChatService} 真正跑了一次问答，却始终没把 emitter 交给
+ * servlet 容器，于是每次 {@code send} 都被缓存在缓冲区里、从不真正发出——等价于客户端在第一帧
+ * 之后立刻消失。即便如此，答案与全部八个步骤仍必须落库，并能通过
+ * {@code GET /api/messages/{id}} 取回。</p>
  */
 class ChatAccessTest extends ChatFixture {
 
@@ -56,7 +56,7 @@ class ChatAccessTest extends ChatFixture {
         long conversationId = createConversation(userToken);
         long messageId = insertAssistantMessage(conversationId);
 
-        // the owner sees both
+        // 会话归属者两条都能看到
         mockMvc.perform(get("/api/conversations/" + conversationId + "/messages")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
                 .andExpect(status().isOk());
@@ -64,7 +64,7 @@ class ChatAccessTest extends ChatFixture {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
                 .andExpect(status().isOk());
 
-        // another USER gets 404 — not 403, so ids cannot be probed
+        // 另一个 USER 拿到的是 404 而不是 403，这样无法用 id 探测资源是否存在
         mockMvc.perform(get("/api/conversations/" + conversationId + "/messages")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + otherToken))
                 .andExpect(status().isNotFound())
@@ -74,7 +74,7 @@ class ChatAccessTest extends ChatFixture {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(40400));
 
-        // and the conversation list is filtered, so it does not even show up
+        // 会话列表也做了过滤，因此它连出现都不会出现
         String listed = mockMvc.perform(get("/api/conversations")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + otherToken))
                 .andExpect(status().isOk())
@@ -96,7 +96,7 @@ class ChatAccessTest extends ChatFixture {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.conversationId").value(conversationId));
 
-        // the admin list runs unfiltered (userId null), which is the branch a normal user never hits
+        // 管理员列表不做过滤（userId 为 null），这条分支普通用户永远走不到
         mockMvc.perform(get("/api/conversations")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                 .andExpect(status().isOk())
@@ -107,7 +107,7 @@ class ChatAccessTest extends ChatFixture {
     void adminCannotPostIntoSomeoneElsesConversation() throws Exception {
         long conversationId = createConversation(userToken);
 
-        // reading is allowed (spec §8: ADMIN 全量只读审计), writing on the user's behalf is not
+        // 读是允许的（spec §8：ADMIN 可全量只读审计），但代用户写入不允许
         mockMvc.perform(get("/api/conversations/" + conversationId + "/messages")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                 .andExpect(status().isOk());
@@ -141,7 +141,7 @@ class ChatAccessTest extends ChatFixture {
         when(retrievalService.retrieve(any())).thenReturn(List.of(chunk("第 7 条：报销需在 30 天内提交。")));
         long conversationId = createConversation(userToken);
 
-        // The emitter is never returned to a container: nothing is ever flushed to a client.
+        // 这个 emitter 从未交还给容器：因此不会有任何内容刷给客户端。
         SseEmitter emitter = chatService.start(conversationId,
                 new CurrentUser(userId, UserRole.USER), "报销时限是多久？");
         long messageId = awaitStatus(conversationId, "COMPLETED");
@@ -164,7 +164,7 @@ class ChatAccessTest extends ChatFixture {
         emitter.complete();
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private long insertAssistantMessage(long conversationId) {
         return jdbc.queryForObject("""

@@ -47,7 +47,7 @@ class ChunkerTest {
                 .contains("咨询平台指南 > 第一章 概述 > 1.1 背景")
                 .contains("咨询平台指南 > 第二章 流程")
                 .contains("咨询平台指南 > 第二章 流程 > 2.1 状态机");
-        // The nested heading is expressed as a full "A > B > C" path.
+        // 嵌套标题以完整的「A > B > C」路径表示。
         assertThat(chunks)
                 .filteredOn(c -> c.headingPath().contains("1.1 背景"))
                 .allSatisfy(c -> assertThat(c.headingPath().split(" > ")).hasSize(3));
@@ -232,7 +232,7 @@ class ChunkerTest {
 
     @Test
     void rejectsCorruptDocxContainer() {
-        // Passes the PK signature sniff but has no OOXML content: Tika (POI) must fail.
+        // 能通过 PK 魔数嗅探，但内部并非 OOXML 内容：Tika（POI）必然解析失败。
         byte[] bytes = new byte[36];
         bytes[0] = 'P';
         bytes[1] = 'K';
@@ -270,7 +270,7 @@ class ChunkerTest {
         assertThat(chunks).allSatisfy(c -> assertThat(c.content().startsWith("\uFEFF")).isFalse());
     }
 
-    // ------------------------------------------------------------------ helpers
+    // ------------------------------------------------------------------ 辅助方法
 
     private static byte[] concat(byte[] first, byte[] second) {
         byte[] out = new byte[first.length + second.length];
@@ -290,7 +290,7 @@ class ChunkerTest {
         }
     }
 
-    /** Builds deterministic Chinese prose with numbered sentences, trimmed to {@code target} code points. */
+    /** 生成带编号句子的确定性中文文本，并裁剪到 {@code target} 个码点。 */
     private static String chineseProse(int target) {
         StringBuilder sb = new StringBuilder(target + 64);
         int count = 0;
@@ -307,10 +307,10 @@ class ChunkerTest {
     }
 
     /**
-     * Builds the .docx fixture with Apache POI at test time instead of committing a binary. The
-     * heading styles are what Tika maps to {@code <h1>}/{@code <h2>}/{@code <h3>}: Tika only emits
-     * a heading tag when the paragraph's style exists in styles.xml and its name starts with
-     * "heading"/"Heading", so the styles are registered explicitly.
+     * 在测试时用 Apache POI 现场生成 .docx 夹具，而不是往仓库里提交一个二进制文件。
+     * 关键在于标题样式——Tika 正是靠它映射出 {@code <h1>}/{@code <h2>}/{@code <h3>}：
+     * 只有段落的样式存在于 styles.xml 且名称以 "heading"/"Heading" 开头时，Tika 才会输出标题标签，
+     * 所以这些样式必须显式注册。
      */
     private static byte[] docxFixture() throws IOException {
         try (XWPFDocument document = new XWPFDocument();
@@ -327,7 +327,7 @@ class ChunkerTest {
         }
     }
 
-    /** Registers Heading1..Heading6 styles; Tika matches them by name, not by style id alone. */
+    /** 注册 Heading1..Heading6 样式；Tika 是按样式名匹配的，光有样式 id 不够。 */
     private static void addHeadingStyles(XWPFDocument document) {
         XWPFStyles styles = document.createStyles();
         for (int level = 1; level <= 6; level++) {

@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * The guards of {@link ChunkWriter#replaceAll} run before any DELETE: a chunk/vector count
- * mismatch is an internal contract violation ({@code INTERNAL_ERROR}), while a vector of the
- * wrong length stays a provider-facing {@code EMBEDDING_DIMENSION_MISMATCH}.
+ * {@link ChunkWriter#replaceAll} 的各项守卫都在任何 DELETE 之前执行：分块数与向量数不一致属于
+ * 内部契约被破坏（{@code INTERNAL_ERROR}），而向量长度不对则仍归为面向提供商的
+ * {@code EMBEDDING_DIMENSION_MISMATCH}。
  */
 class ChunkWriterTest {
 
