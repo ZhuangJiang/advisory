@@ -74,6 +74,8 @@ public abstract class IntegrationTestBase {
         // Selects the deterministic stub EmbeddingGateway (TestEmbeddingGatewayConfig) instead of the
         // real Spring AI gateway, so no integration test ever performs provider network calls.
         registry.add("app.embedding.gateway", () -> "stub");
+        // Same for the chat path: TestChatModelGatewayConfig supplies a scripted ChatModelGateway.
+        registry.add("app.chat.gateway", () -> "stub");
     }
 
     @BeforeAll

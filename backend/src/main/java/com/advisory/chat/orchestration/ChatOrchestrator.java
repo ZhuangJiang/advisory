@@ -50,9 +50,9 @@ import java.util.function.Supplier;
  * phase writes a {@link ReasoningStepData} (RETRIEVE included) with latency and a JSON payload; the
  * {@link StepSink} is an observer only and may be a no-op.</p>
  *
- * <p>This class is intentionally not a Spring bean yet: the production {@link ChatModelGateway}
- * implementation arrives with the conversation layer (Task 12), and an un-wired bean would break
- * every integration test that boots the shared context.</p>
+ * <p>Registered as a bean by {@code ChatConfig} with the production {@link ChatModelGateway}; the
+ * class itself stays framework-free (no annotations, no Spring types) so the unit test can drive it
+ * with a scripted fake. {@link #shutdown()} stops its step executor on context close.</p>
  */
 public class ChatOrchestrator {
 
@@ -96,6 +96,11 @@ public class ChatOrchestrator {
         });
     }
 
+    /** Stops the per-step executor. Called on context shutdown; a run in flight is interrupted. */
+    public void shutdown() {
+        executor.shutdownNow();
+    }
+
     public OrchestrationResult run(AgentSnapshot agent, String question, StepSink sink) {
         Objects.requireNonNull(agent, "agent");
         if (question == null || question.isBlank()) {
@@ -120,8 +125,8 @@ public class ChatOrchestrator {
         boolean planParsed = true;
         try {
             PlanResult raw = timed(() -> gateway.chatStructured(agent.chatModelId(),
-                    PromptTemplates.planSystem(), PromptTemplates.planUser(trimmedQuestion),
-                    PlanResult.class));
+                    agent.temperature(), PromptTemplates.planSystem(),
+                    PromptTemplates.planUser(trimmedQuestion), PlanResult.class));
             queries = normalizePlan(raw, List.of(trimmedQuestion)).queries();
         } catch (StepTimedOutException e) {
             steps.add(step(round, Phase.PLAN, "规划超时，按已有证据进入回答", TIMEOUT_PAYLOAD, planStartedAt));
@@ -179,7 +184,7 @@ public class ChatOrchestrator {
             final int reflectRound = round;
             try {
                 ReflectResult raw = timed(() -> gateway.chatStructured(agent.chatModelId(),
-                        PromptTemplates.reflectSystem(),
+                        agent.temperature(), PromptTemplates.reflectSystem(),
                         PromptTemplates.reflectUser(trimmedQuestion,
                                 PromptTemplates.numberedEvidence(List.copyOf(evidence.values())),
                                 draftSoFar, reflectRound, maxRounds),
@@ -237,7 +242,7 @@ public class ChatOrchestrator {
         } else {
             String numbered = PromptTemplates.numberedEvidence(citations);
             try {
-                answer = timed(() -> gateway.chat(agent.chatModelId(),
+                answer = timed(() -> gateway.chat(agent.chatModelId(), agent.temperature(),
                         PromptTemplates.answerSystem(),
                         PromptTemplates.answerUser(trimmedQuestion, numbered)));
                 steps.add(step(round, Phase.ANSWER, "基于 " + citations.size() + " 个片段生成答案",

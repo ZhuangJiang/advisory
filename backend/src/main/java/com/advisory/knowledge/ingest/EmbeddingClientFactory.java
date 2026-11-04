@@ -2,6 +2,8 @@ package com.advisory.knowledge.ingest;
 
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
+import com.advisory.provider.repo.ModelLookup;
+import com.advisory.provider.repo.ModelLookup.ModelRow;
 import com.advisory.provider.service.CryptoService;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingOptions;
@@ -9,7 +11,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.List;
 
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.ollama.OllamaEmbeddingModel;
@@ -37,28 +38,13 @@ public class EmbeddingClientFactory {
     /** Hard timeouts required by the spec for a single provider call. */
     static final Duration PROVIDER_TIMEOUT = Duration.ofSeconds(60);
 
-    private static final String MODEL_SQL = """
-            SELECT m.model_name,
-                   m.capability,
-                   m.dimension,
-                   m.enabled,
-                   p.id            AS provider_id,
-                   p.type          AS provider_type,
-                   p.base_url      AS base_url,
-                   p.enabled       AS provider_enabled,
-                   p.api_key_cipher AS api_key_cipher
-            FROM models m
-            JOIN model_providers p ON p.id = m.provider_id
-            WHERE m.id = ?
-            """;
-
-    private final JdbcTemplate jdbc;
+    private final ModelLookup lookup;
     private final int configuredDimension;
     private final CryptoService cryptoService;
 
     public EmbeddingClientFactory(JdbcTemplate jdbc, int configuredDimension,
                                   CryptoService cryptoService) {
-        this.jdbc = jdbc;
+        this.lookup = new ModelLookup(jdbc);
         this.configuredDimension = configuredDimension;
         this.cryptoService = cryptoService;
     }
@@ -73,21 +59,9 @@ public class EmbeddingClientFactory {
      * carries the configured model, independent of provider-guessable defaults.</p>
      */
     public EmbeddingClient forEmbedding(long embeddingModelId) {
-        List<ModelRow> rows = jdbc.query(MODEL_SQL, (rs, rowNum) -> new ModelRow(
-                rs.getString("model_name"),
-                rs.getString("capability"),
-                (Integer) rs.getObject("dimension"),
-                rs.getBoolean("enabled"),
-                rs.getLong("provider_id"),
-                rs.getString("provider_type"),
-                rs.getString("base_url"),
-                rs.getBoolean("provider_enabled"),
-                rs.getString("api_key_cipher")), embeddingModelId);
-        if (rows.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "未找到 embedding 模型 (id=" + embeddingModelId + ")");
-        }
-        ModelRow row = rows.get(0);
+        ModelRow row = lookup.find(embeddingModelId).orElseThrow(() -> new AppException(
+                ErrorCode.VALIDATION_FAILED,
+                "未找到 embedding 模型 (id=" + embeddingModelId + ")"));
         if (!row.capability().equals("EMBEDDING")) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
                     "模型不是 embedding 模型 (capability=" + row.capability() + ")");
@@ -180,16 +154,5 @@ public class EmbeddingClientFactory {
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(PROVIDER_TIMEOUT);
         return RestClient.builder().requestFactory(requestFactory);
-    }
-
-    private record ModelRow(String modelName,
-                            String capability,
-                            Integer dimension,
-                            boolean enabled,
-                            long providerId,
-                            String providerType,
-                            String baseUrl,
-                            boolean providerEnabled,
-                            String apiKeyCipher) {
     }
 }
