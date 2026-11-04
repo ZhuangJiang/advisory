@@ -6,3 +6,6 @@ dist/
 .idea/
 .vscode/
 backend/data/
+backend/.settings
+backend/.classpath
+backend/.project
