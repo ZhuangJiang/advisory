@@ -1,16 +1,15 @@
 #!/bin/sh
-# Creates the document bucket once, before the backend accepts uploads.
+# 在后端开始接收上传之前，先把文档桶建好，且只做一次。
 #
-# The application never creates buckets itself: a missing bucket is a configuration error that
-# should be visible at deploy time, not something a request silently fixes. `--ignore-existing`
-# makes this safe to re-run on every `docker compose up`.
+# 应用自身从不创建桶：桶缺失属于配置错误，应该在部署时就暴露出来，而不是被某个请求悄悄兜住。
+# 加 `--ignore-existing` 之后，每次 `docker compose up` 重跑都安全。
 set -eu
 
 : "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
 : "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
 : "${MINIO_BUCKET:=advisory}"
 
-# The server image ships the client at /opt/bin/mc but not on PATH.
+# 服务端镜像把客户端放在 /opt/bin/mc，但没加进 PATH。
 MC=$(command -v mc || echo /opt/bin/mc)
 
 "$MC" alias set local http://minio:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null

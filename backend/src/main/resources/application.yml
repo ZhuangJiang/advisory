@@ -22,11 +22,11 @@ app:
   encryption-key: ${APP_ENCRYPTION_KEY:dev-only-32-byte-key-change-me!!}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
-    # Address used only to sign upload URLs. Empty = same as `endpoint`. In docker compose the
-    # internal endpoint is http://minio:9000, which a browser cannot resolve, so the host address
-    # must be configured here for uploads to work.
+    # 仅供签发上传 URL 使用的地址。留空则与 `endpoint` 相同。在 docker compose 里，
+    # 内网端点 http://minio:9000 是浏览器解析不了的，因此必须在这里配置宿主机可达的地址，
+    # 上传才能正常工作。
     public-endpoint: ${MINIO_PUBLIC_ENDPOINT:}
-    # MinIO only really supports its default region; pinned so presigning needs no round-trip.
+    # MinIO 实际上只支持默认 region；这里写死是为了让预签名不必先发请求探一次。
     region: ${MINIO_REGION:us-east-1}
     access-key: ${MINIO_ACCESS_KEY:minioadmin}
     secret-key: ${MINIO_SECRET_KEY:minioadmin}

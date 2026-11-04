@@ -34,11 +34,11 @@ services:
       timeout: 5s
       retries: 12
 
-  # One-shot: creates the bucket and exits. The backend waits for it to complete, because a running
-  # backend with no bucket would accept an upload and only fail later at presign time.
+  # 一次性任务：建好桶就退出。后端会等它执行完成——否则后端虽然起来了但没有桶，
+  # 上传请求会被接收，直到预签名那一步才失败。
   minio-init:
-    # The server image already carries the client at /opt/bin/mc, so no second image is needed
-    # (and minio/mc is not reachable from every registry mirror).
+    # 服务端镜像本身就在 /opt/bin/mc 带了这个客户端，无需另起一个镜像
+    # （而且不是每个镜像仓库都能拉到 minio/mc）。
     image: ${MINIO_IMAGE:-minio/minio}
     container_name: advisory-minio-init
     depends_on:
@@ -70,7 +70,7 @@ services:
       DB_USER: ${DB_USER:-advisory}
       DB_PASSWORD: ${DB_PASSWORD:-advisory}
       MINIO_ENDPOINT: http://minio:9000
-      # Signed into upload URLs, so it must be the address the browser uses.
+      # 这个地址会被签进上传 URL，因此必须是浏览器实际访问的地址。
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -82,9 +82,9 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      # The runtime image is alpine, so busybox wget is available without installing a package.
-      # 127.0.0.1, not localhost: inside the container `localhost` may resolve to ::1 first and the
-      # JVM/nginx only listen on IPv4, which turns a healthy service into "connection refused".
+      # 运行时镜像是 alpine，自带 busybox wget，不必再装包。
+      # 这里写 127.0.0.1 而不是 localhost：容器内 localhost 可能优先解析到 ::1，
+      # 而 JVM/nginx 只监听 IPv4，结果一个本来健康的服务被报成「连接被拒绝」。
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q UP"]
       interval: 10s
       timeout: 5s
