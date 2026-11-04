@@ -2,6 +2,7 @@ package com.advisory.knowledge.ingest;
 
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
+import com.advisory.provider.service.CryptoService;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingOptions;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -53,10 +54,13 @@ public class EmbeddingClientFactory {
 
     private final JdbcTemplate jdbc;
     private final int configuredDimension;
+    private final CryptoService cryptoService;
 
-    public EmbeddingClientFactory(JdbcTemplate jdbc, int configuredDimension) {
+    public EmbeddingClientFactory(JdbcTemplate jdbc, int configuredDimension,
+                                  CryptoService cryptoService) {
         this.jdbc = jdbc;
         this.configuredDimension = configuredDimension;
+        this.cryptoService = cryptoService;
     }
 
     /**
@@ -115,12 +119,24 @@ public class EmbeddingClientFactory {
     }
 
     /**
-     * Ruling R5 seam: until Task 9 {@code CryptoService} exists, the stored {@code api_key_cipher}
-     * value is returned as-is and used as the bearer token. Task 9 replaces this body with
-     * {@code CryptoService.decrypt(apiKeyCipher)} — nowhere else in this task touches key material.
+     * Decrypts the provider's stored {@code api_key_cipher} with the Task 9 {@link CryptoService}
+     * (AES-GCM; this body replaced ruling R5's plaintext passthrough seam). A key that cannot be
+     * decrypted fails fast with a clear {@link AppException} — the ingest worker then fails the
+     * document with that readable message; the ciphertext is never sent to a provider as if it
+     * were the bearer token. A missing key stays {@code null} (OpenAI clients without
+     * authentication substitute their own placeholder below).
      */
     String resolveApiKey(long providerId, String apiKeyCipher) {
-        return apiKeyCipher;
+        if (apiKeyCipher == null || apiKeyCipher.isBlank()) {
+            return null;
+        }
+        try {
+            return cryptoService.decrypt(apiKeyCipher);
+        } catch (RuntimeException e) {
+            String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            throw new AppException(ErrorCode.VALIDATION_FAILED,
+                    "提供商 API 密钥无法解密 (provider id=" + providerId + "): " + reason);
+        }
     }
 
     private static EmbeddingClient buildOpenAiClient(String baseUrl, String modelName, String apiKey) {

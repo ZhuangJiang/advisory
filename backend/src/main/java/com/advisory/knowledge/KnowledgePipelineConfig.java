@@ -6,6 +6,7 @@ import com.advisory.knowledge.ingest.EmbeddingGateway;
 import com.advisory.knowledge.ingest.StructureAwareChunker;
 import com.advisory.knowledge.ingest.SpringAiEmbeddingGateway;
 import com.advisory.knowledge.ingest.TikaDocumentParser;
+import com.advisory.provider.service.CryptoService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -37,8 +38,9 @@ public class KnowledgePipelineConfig {
     /** Programmatic Spring AI client construction site (no starter auto-configuration, ruling R1). */
     @Bean
     public EmbeddingClientFactory embeddingClientFactory(JdbcTemplate jdbc,
-                                                        @Value("${app.embedding.dimension}") int dimension) {
-        return new EmbeddingClientFactory(jdbc, dimension);
+                                                        @Value("${app.embedding.dimension}") int dimension,
+                                                        CryptoService cryptoService) {
+        return new EmbeddingClientFactory(jdbc, dimension, cryptoService);
     }
 
     @Bean

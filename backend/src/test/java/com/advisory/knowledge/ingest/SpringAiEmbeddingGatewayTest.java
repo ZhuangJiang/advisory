@@ -2,6 +2,7 @@ package com.advisory.knowledge.ingest;
 
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
+import com.advisory.provider.service.CryptoService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -79,7 +80,8 @@ class SpringAiEmbeddingGatewayTest {
     }
 
     private static EmbeddingClientFactory fakeFactoryReturning(CallFunction function) {
-        return new EmbeddingClientFactory(null, 1024) {
+        return new EmbeddingClientFactory(null, 1024,
+                new CryptoService("unit-test-encryption-key")) {
             @Override
             public EmbeddingClient forEmbedding(long embeddingModelId) {
                 return new EmbeddingClient(new FixedEmbeddingModel(1024, function), null);
