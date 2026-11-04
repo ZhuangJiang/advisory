@@ -9,3 +9,4 @@ backend/data/
 backend/.settings
 backend/.classpath
 backend/.project
+backend/.lithe/
