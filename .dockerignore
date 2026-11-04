@@ -1,0 +1,12 @@
+.git
+.github
+.workbuddy
+.superpowers
+.vscode
+docs
+frontend/node_modules
+frontend/dist
+backend/target
+backend/data
+**/*.log
+.env

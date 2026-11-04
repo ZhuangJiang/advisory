@@ -1,0 +1,6 @@
+# Shell scripts and container configs are mounted into Linux containers: CRLF would break them
+# (`set -eu\r` is not a valid option), so their line endings are pinned regardless of core.autocrlf.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf

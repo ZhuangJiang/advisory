@@ -34,19 +34,44 @@ services:
       timeout: 5s
       retries: 12
 
+  # One-shot: creates the bucket and exits. The backend waits for it to complete, because a running
+  # backend with no bucket would accept an upload and only fail later at presign time.
+  minio-init:
+    # The server image already carries the client at /opt/bin/mc, so no second image is needed
+    # (and minio/mc is not reachable from every registry mirror).
+    image: ${MINIO_IMAGE:-minio/minio}
+    container_name: advisory-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-advisory}
+    entrypoint: ["/bin/sh", "/init-bucket.sh"]
+    volumes:
+      - ./deploy/init-bucket.sh:/init-bucket.sh:ro
+    restart: "no"
+
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: advisory-backend
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-advisory}
       DB_USER: ${DB_USER:-advisory}
       DB_PASSWORD: ${DB_PASSWORD:-advisory}
       MINIO_ENDPOINT: http://minio:9000
+      # Signed into upload URLs, so it must be the address the browser uses.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-advisory}
@@ -56,6 +81,31 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
     ports:
       - "8080:8080"
+    healthcheck:
+      # The runtime image is alpine, so busybox wget is available without installing a package.
+      # 127.0.0.1, not localhost: inside the container `localhost` may resolve to ::1 first and the
+      # JVM/nginx only listen on IPv4, which turns a healthy service into "connection refused".
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: advisory-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 
 volumes:
   pgdata:

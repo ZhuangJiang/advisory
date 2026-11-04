@@ -9,6 +9,7 @@ import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -21,10 +22,12 @@ import java.util.Optional;
 /**
  * Thin wrapper around the single MinIO bucket.
  *
- * <p>Uploads never pass through the application: clients PUT directly to a presigned URL. The
- * signature only covers host and query string, so callers must not add signed headers (for example
- * {@code Content-Type}) to the PUT. MinIO's maximum presign lifetime is seven days; a shorter TTL is
- * clamped to at least one second.</p>
+ * <p>Uploads never pass through the application: clients PUT directly to a presigned URL. That URL
+ * is signed by a second client built on the <em>public</em> endpoint (see {@code MinioConfig}),
+ * because a SigV4 signature covers the host: a URL signed for {@code minio:9000} cannot be used by a
+ * browser. The signature also covers the query string only, so callers must not add signed headers
+ * (for example {@code Content-Type}) to the PUT. MinIO's maximum presign lifetime is seven days; a
+ * shorter TTL is clamped to at least one second.</p>
  *
  * <p>SDK failures are rethrown as {@link IllegalStateException}: they are infrastructure problems
  * and surface as {@code INTERNAL_ERROR}, never as client validation errors. {@link #stat(String)} is
@@ -36,10 +39,14 @@ public class StorageService {
     private static final int MAX_PRESIGN_SECONDS = 7 * 24 * 60 * 60;
 
     private final MinioClient minioClient;
+    private final MinioClient presignClient;
     private final String bucket;
 
-    public StorageService(MinioClient minioClient, @Value("${app.minio.bucket}") String bucket) {
+    public StorageService(MinioClient minioClient,
+                          @Qualifier("minioPresignClient") MinioClient presignClient,
+                          @Value("${app.minio.bucket}") String bucket) {
         this.minioClient = minioClient;
+        this.presignClient = presignClient;
         this.bucket = bucket;
     }
 
@@ -54,7 +61,7 @@ public class StorageService {
     private String presign(String objectKey, Duration ttl, Method method) {
         int expirySeconds = (int) Math.min(Math.max(ttl.getSeconds(), 1), MAX_PRESIGN_SECONDS);
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(method)
                     .bucket(bucket)
                     .object(objectKey)

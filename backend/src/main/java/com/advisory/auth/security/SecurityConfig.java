@@ -2,6 +2,7 @@ package com.advisory.auth.security;
 
 import com.advisory.auth.service.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,6 +54,13 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // An SseEmitter completes through an ASYNC dispatch, where the JWT filter does
+                        // not run again — re-authorizing there denies the *finished* response and
+                        // Tomcat cannot even write the error (the response is committed). ERROR is
+                        // permitted for the same reason: an error page must never need a re-check.
+                        // Both dispatches are internal continuations of a request that was already
+                        // authorized when it arrived.
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/auth/logout",
                                 "/actuator/health").permitAll()
                         .anyRequest().authenticated())
