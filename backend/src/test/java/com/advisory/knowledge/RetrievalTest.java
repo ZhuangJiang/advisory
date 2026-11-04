@@ -204,6 +204,39 @@ class RetrievalTest extends IntegrationTestBase {
                 "KB_REINDEXING must map to HTTP 409");
     }
 
+    /**
+     * Every (kbId, path, query) triple must reach {@link RrfFusion#fuse} as its own ranked list:
+     * the chunk below ranks 2nd in BOTH query keyword lists, so it sums {@code 2 × 1/62} and
+     * beats a rank-1-only chunk's {@code 1/61}. The pre-review merge kept a single best
+     * contribution per chunk ({@code 1/62}) and would have ranked it last instead.
+     */
+    @Test
+    void multiQueryContributionsAccumulate() {
+        long kb = createKb("multi-query");
+        long node = createNode(kb, null);
+        // Deliberately disjoint texts: no shared trigrams between q1 and q2, so each query's
+        // keyword list holds exactly its own exact hit plus the combined chunk.
+        String q1 = "阿尔法财务折旧核算口径xyz1";
+        String q2 = "微波通信天线增益测试uvw2";
+        long chunkQ1 = insertChunk(kb, node, q1);          // rank 1 in q1's list only
+        long chunkQ2 = insertChunk(kb, node, q2);          // rank 1 in q2's list only
+        long chunkBoth = insertChunk(kb, node, q1 + "；" + q2); // rank 2 in both lists
+
+        List<RetrievedChunk> results = retrievalService.retrieve(new RetrievalQuery(
+                List.of(kb), Map.of(), List.of(q1, q2), 20, 8));
+
+        Set<Long> ids = chunkIdsOf(results);
+        assertTrue(ids.contains(chunkQ1), "q1's exact hit must appear, got " + results);
+        assertTrue(ids.contains(chunkQ2), "q2's exact hit must appear, got " + results);
+        assertEquals(3, ids.size(), "only the three seeded chunks are eligible, got " + results);
+
+        RetrievedChunk top = results.get(0);
+        assertEquals(chunkBoth, top.chunkId(),
+                "the chunk found by both queries must win through accumulated contributions");
+        assertEquals(2.0 / 62, top.score(), 1e-12,
+                "score must be 1/(60+2) from q1's list + 1/(60+2) from q2's list — one contribution per list");
+    }
+
     /** Only REINDEXING blocks: a FAILED knowledge base must stay retrievable (design §10). */
     @Test
     void failedKbStillRetrievable() {
@@ -412,6 +445,33 @@ class RetrievalTest extends IntegrationTestBase {
             assertEquals(List.of(4L, 7L), orderedIds(fusion.fuse(listsSwapped, 10)),
                     "the tie-break must not depend on input list order");
         }
+    }
+
+    /** finalTopK caps the DEDUPLICATED result: one chunk in six lists still counts once. */
+    @Test
+    void finalTopKCapsAfterDedup() {
+        // Chunk 1 appears in six lists (rank 1 everywhere) → 6/61. Chunk 2 appears twice at
+        // rank 2 → 2/62; chunk 3 once at rank 2 → 1/62. Capping at 2 must yield exactly two
+        // distinct chunks (the heavily duplicated one first), not three rows or one per list.
+        List<List<RetrievedChunk>> lists = List.of(
+                List.of(chunkWithScore(1, 9), chunkWithScore(2, 8)),
+                List.of(chunkWithScore(1, 7)),
+                List.of(chunkWithScore(1, 6), chunkWithScore(3, 5)),
+                List.of(chunkWithScore(1, 4)),
+                List.of(chunkWithScore(1, 3)),
+                List.of(chunkWithScore(1, 2), chunkWithScore(2, 1)));
+
+        List<RetrievedChunk> fused = new RrfFusion().fuse(lists, 2);
+
+        assertEquals(2, fused.size(), "finalTopK=2 must cap after dedup");
+        assertEquals(2, new HashSet<>(orderedIds(fused)).size(),
+                "the two returned rows must be distinct chunks");
+        assertEquals(1L, fused.get(0).chunkId(), "the chunk in six lists ranks first");
+        assertEquals(6.0 / 61, fused.get(0).score(), 1e-12,
+                "one contribution per list: six lists at rank 1");
+        assertEquals(2L, fused.get(1).chunkId(),
+                "second place goes to two rank-2 contributions, not one");
+        assertEquals(2.0 / 62, fused.get(1).score(), 1e-12);
     }
 
     // ------------------------------------------------------------------ helpers

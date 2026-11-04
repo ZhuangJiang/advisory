@@ -11,11 +11,13 @@ import java.util.Set;
 /**
  * Reciprocal Rank Fusion (RRF) over ranked retrieval paths (ruling R5).
  *
- * <p>Every input list is one ranked path — for retrieval that is the vector path and the keyword
- * path of each requested knowledge base ({@code 2 × |kbIds|} lists). Rank is 1-based; each chunk
- * gains {@code 1 / (k + rank)} in every list it appears in, and the accumulated score decides the
- * fused order. Chunks are deduplicated by {@code chunkId}: a chunk found by several paths (or
- * several knowledge bases, if ids ever collided) appears exactly once with the summed score.</p>
+ * <p>Every input list is one ranked path — for retrieval that is one {@code (kbId, path, query)}
+ * triple: the vector or keyword result of one query for one knowledge base (up to
+ * {@code 2 × |kbIds| × |queries|} lists). Rank is 1-based; each chunk gains
+ * {@code 1 / (k + rank)} in every list it appears in, and the accumulated score decides the
+ * fused order. Chunks are deduplicated by {@code chunkId}: a chunk found by several paths
+ * (or several knowledge bases, if ids ever collided) appears exactly once with the summed
+ * score.</p>
  *
  * <p>Because fusion only ever looks at ranks, scores from different embedding models or paths are
  * never compared — that is the whole point of RRF for cross-KB retrieval. Ties break by lower

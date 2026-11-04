@@ -10,8 +10,9 @@ package com.advisory.knowledge.retrieval;
  * @param docName    {@code documents.filename}
  * @param nodeName   {@code kb_nodes.name}, {@code null} for node-less chunks
  * @param content    {@code chunks.content}
- * @param score      path score before fusion (cosine similarity or trigram similarity), or the
- *                   fused RRF score after {@link RrfFusion#fuse}
+ * @param score      the raw path score (cosine or trigram similarity) when the chunk comes from
+ *                   {@link RetrievalJdbcRepository}'s ranked lists, or the RRF fused score
+ *                   {@code Σ 1/(60+rank)} when returned by {@link RetrievalService#retrieve}
  */
 public record RetrievedChunk(Long chunkId, Long documentId, Long kbId, Long nodeId,
                              String docName, String nodeName, String content, double score) {

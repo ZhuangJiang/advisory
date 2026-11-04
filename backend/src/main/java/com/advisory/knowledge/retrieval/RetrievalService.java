@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -18,9 +17,13 @@ import java.util.Set;
 
 /**
  * Hybrid retrieval orchestration (design §11 "RETRIEVE"): per knowledge base a vector path and a
- * {@code pg_trgm} keyword path, all {@code 2 × |kbIds|} ranked lists fused globally with RRF
- * (k=60), then capped at {@code finalTopK}. The SQL lives in {@link RetrievalJdbcRepository};
- * this class validates the request, drives the embedding gateway and merges multi-query results.
+ * {@code pg_trgm} keyword path <em>per query text</em> — every ranked list is one
+ * {@code (kbId, path, query)} triple, so at most {@code 2 × |kbIds| × |queries|} lists — all
+ * fused globally with RRF (k=60) and capped at {@code finalTopK}. Keeping the lists separate is
+ * what lets a chunk that several queries found accumulate one {@code 1/(k+rank)} contribution
+ * per list inside {@link RrfFusion#fuse} (dedup and summation happen there, by {@code chunkId}).
+ * The SQL lives in {@link RetrievalJdbcRepository}; this class validates the request and drives
+ * the embedding gateway.
  *
  * <p>Binding rulings implemented here:</p>
  * <ul>
@@ -69,6 +72,9 @@ public class RetrievalService {
         for (Long kbId : kbIds) {
             RetrievalJdbcRepository.KbMeta meta = metaById.get(kbId);
             if (meta == null) {
+                // Silent skip is deliberate: agent kb config is validated when the Agent is saved
+                // (Task 10), and retrieval must not turn a stale id into a 500 — it just
+                // contributes nothing.
                 log.debug("Knowledge base {} does not exist; skipping it in retrieval", kbId);
                 continue;
             }
@@ -94,12 +100,15 @@ public class RetrievalService {
             }
             List<Long> scope = effectiveScope(nodeScope.get(kbId));
 
-            // Keyword path — one ranked list per KB, merged across the query texts.
-            Map<Long, RetrievedChunk> keywordBest = new LinkedHashMap<>();
+            // One keyword list per (KB, query): never merged across queries — a chunk ranked in
+            // several query lists must accumulate 1/(k+rank) per list inside RrfFusion.fuse.
             for (String text : queries) {
-                mergeBest(keywordBest, repository.keywordTopK(kbId, text, scope, perKbTopK));
+                List<RetrievedChunk> keywordList =
+                        repository.keywordTopK(kbId, text, scope, perKbTopK);
+                if (!keywordList.isEmpty()) {
+                    rankedLists.add(keywordList);
+                }
             }
-            addCapped(rankedLists, keywordBest, perKbTopK);
 
             // Vector path — skipped when the KB has no embedding model (R6).
             Long modelId = meta.embeddingModelId();
@@ -108,12 +117,14 @@ public class RetrievalService {
                 continue;
             }
             List<float[]> vectors = embeddingGateway.embed(modelId, queries);
-            Map<Long, RetrievedChunk> vectorBest = new LinkedHashMap<>();
             for (int i = 0; i < queries.size() && i < vectors.size(); i++) {
-                String vectorText = toVectorText(vectors.get(i));
-                mergeBest(vectorBest, repository.vectorTopK(kbId, vectorText, scope, perKbTopK));
+                // One vector list per (KB, query), same no-merge rule as the keyword path.
+                List<RetrievedChunk> vectorList = repository.vectorTopK(
+                        kbId, toVectorText(vectors.get(i)), scope, perKbTopK);
+                if (!vectorList.isEmpty()) {
+                    rankedLists.add(vectorList);
+                }
             }
-            addCapped(rankedLists, vectorBest, perKbTopK);
         }
 
         return rrfFusion.fuse(rankedLists, finalTopK);
@@ -160,39 +171,6 @@ public class RetrievalService {
     /** Missing key or empty list = whole KB (R4). */
     private static List<Long> effectiveScope(List<Long> scope) {
         return scope == null || scope.isEmpty() ? List.of() : scope;
-    }
-
-    // ------------------------------------------------------------------ multi-query merging
-
-    /**
-     * Keeps each chunk's best score across the query texts. Strict {@code >} keeps the first
-     * occurrence on ties, so the merge is deterministic (query order and SQL {@code chunk.id}
-     * tie-breaks decide).
-     */
-    private static void mergeBest(Map<Long, RetrievedChunk> best, List<RetrievedChunk> results) {
-        for (RetrievedChunk chunk : results) {
-            RetrievedChunk current = best.get(chunk.chunkId());
-            if (current == null || chunk.score() > current.score()) {
-                best.put(chunk.chunkId(), chunk);
-            }
-        }
-    }
-
-    /** Adds one knowledge base's merged path as a ranked list: score desc, lower id first. */
-    private static void addCapped(List<List<RetrievedChunk>> rankedLists,
-                                  Map<Long, RetrievedChunk> best, int perKbTopK) {
-        if (best.isEmpty()) {
-            return;
-        }
-        List<RetrievedChunk> ranked = new ArrayList<>(best.values());
-        ranked.sort((a, b) -> {
-            int byScore = Double.compare(b.score(), a.score());
-            return byScore != 0 ? byScore : Long.compare(a.chunkId(), b.chunkId());
-        });
-        if (ranked.size() > perKbTopK) {
-            ranked = new ArrayList<>(ranked.subList(0, perKbTopK));
-        }
-        rankedLists.add(ranked);
     }
 
     // ------------------------------------------------------------------ pgvector text format
