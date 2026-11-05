@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteAgent, listAgents, type Agent } from '@/api/agents'
+import { deleteAgent, listAgents, offlineAgent, onlineAgent, type Agent } from '@/api/agents'
 import { describeKnowledgeError } from '@/api/knowledge'
 import AgentTestDrawer from '@/components/AgentTestDrawer.vue'
 
@@ -54,9 +54,38 @@ function test(row: Agent): void {
   drawerVisible.value = true
 }
 
+async function toggle(row: Agent): Promise<void> {
+  const action = row.enabled ? '下线' : '上线'
+  const detail = row.enabled
+    ? '下线后普通用户不能再新建会话，已有会话仍可查看。'
+    : '上线后普通用户可以重新为该 Agent 新建会话。'
+  try {
+    await ElMessageBox.confirm(`确认${action} Agent「${row.name}」？${detail}`, `${action} Agent`, {
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+  try {
+    if (row.enabled) {
+      await offlineAgent(row.id)
+    } else {
+      await onlineAgent(row.id)
+    }
+    ElMessage.success(row.enabled ? '已下线' : '已上线')
+    await load()
+  } catch (e) {
+    ElMessage.error(describeKnowledgeError(e))
+  }
+}
+
 async function remove(row: Agent): Promise<void> {
   try {
-    await ElMessageBox.confirm(`确认删除 Agent「${row.name}」？`, '删除 Agent', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确认删除 Agent「${row.name}」？删除后不可恢复，历史会话会保留。`,
+      '删除 Agent',
+      { type: 'warning' }
+    )
   } catch {
     return
   }
@@ -102,18 +131,35 @@ function formatTime(value: string): string {
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-            {{ row.enabled ? '启用' : '停用' }}
+            {{ row.enabled ? '在线' : '已下线' }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
           <el-button link size="small" data-test="agent-edit" @click="edit(row)">编辑</el-button>
           <el-button link size="small" data-test="agent-test" @click="test(row)">试运行</el-button>
-          <el-button link size="small" type="danger" data-test="agent-delete" @click="remove(row)">
+          <el-button
+            link
+            size="small"
+            :type="row.enabled ? 'warning' : 'success'"
+            data-test="agent-toggle"
+            @click="toggle(row)"
+          >
+            {{ row.enabled ? '下线' : '上线' }}
+          </el-button>
+          <el-button
+            link
+            size="small"
+            type="danger"
+            data-test="agent-delete"
+            :disabled="row.enabled"
+            :title="row.enabled ? '请先下线后再删除' : ''"
+            @click="remove(row)"
+          >
             删除
           </el-button>
         </template>

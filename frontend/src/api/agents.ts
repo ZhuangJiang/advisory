@@ -85,7 +85,6 @@ export interface AgentInput {
   maxRounds: number
   topK: number
   temperature: number
-  enabled: boolean
 }
 
 export function listAgents(page = 0, size = 20): Promise<Page<Agent>> {
@@ -102,6 +101,15 @@ export function createAgent(body: AgentInput): Promise<Agent> {
 
 export function updateAgent(id: number, body: Partial<AgentInput>): Promise<Agent> {
   return http.patch(`/api/agents/${id}`, body)
+}
+
+/** ADMIN-only: online/offline only flips state, so the version history stays untouched. */
+export function onlineAgent(id: number): Promise<Agent> {
+  return http.post(`/api/agents/${id}/online`)
+}
+
+export function offlineAgent(id: number): Promise<Agent> {
+  return http.post(`/api/agents/${id}/offline`)
 }
 
 export function deleteAgent(id: number): Promise<void> {

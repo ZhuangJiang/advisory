@@ -45,8 +45,7 @@ const form = reactive({
   nodeScope: {} as Record<number, number[]>,
   maxRounds: 3,
   topK: 20,
-  temperature: 0.7,
-  enabled: true
+  temperature: 0.7
 })
 
 const canSave = computed(
@@ -70,7 +69,6 @@ function applyAgent(agent: Awaited<ReturnType<typeof getAgent>>): void {
   form.maxRounds = agent.maxRounds
   form.topK = agent.topK
   form.temperature = Number(agent.temperature)
-  form.enabled = agent.enabled
   currentVersion.value = agent.currentVersion
 }
 
@@ -110,8 +108,7 @@ async function save(): Promise<void> {
       nodeScope: form.nodeScope,
       maxRounds: form.maxRounds,
       topK: form.topK,
-      temperature: form.temperature,
-      enabled: form.enabled
+      temperature: form.temperature
     }
     if (agentId.value === null) {
       const created = await createAgent(body)
@@ -210,10 +207,6 @@ function formatTime(value: string): string {
             </el-form-item>
             <el-form-item label="温度">
               <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.05" show-input />
-            </el-form-item>
-            <el-form-item label="启用">
-              <el-switch v-model="form.enabled" />
-              <span class="field-hint inline">停用后不能新建会话，历史会话仍可查看。</span>
             </el-form-item>
             <el-form-item>
               <el-button
