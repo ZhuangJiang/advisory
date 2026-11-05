@@ -1,7 +1,7 @@
 package com.advisory.audit.repo;
 
 import com.advisory.audit.dto.AuditConversationRow;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.advisory.common.jdbc.JdbcRepository;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -22,7 +22,7 @@ import java.util.Optional;
  * 这个页面回答的是「这段时间里新开了哪些会话」。</p>
  */
 @Repository
-public class AuditRepository {
+public class AuditRepository extends JdbcRepository {
 
     private static final String WHERE = """
             WHERE (CAST(? AS BIGINT) IS NULL OR c.user_id = CAST(? AS BIGINT))
@@ -42,7 +42,6 @@ public class AuditRepository {
             JOIN agents a ON a.id = c.agent_id
             """;
 
-    private final JdbcTemplate jdbc;
 
     private final RowMapper<AuditConversationRow> rowMapper = (rs, rowNum) -> new AuditConversationRow(
             rs.getLong("id"),
@@ -57,9 +56,6 @@ public class AuditRepository {
             rs.getTimestamp("last_message_at") == null
                     ? null : rs.getTimestamp("last_message_at").toInstant());
 
-    public AuditRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     /** 分页查询会话，四个筛选条件均可为空。 */
     public List<AuditConversationRow> findPage(Long userId, Long agentId, Instant from,

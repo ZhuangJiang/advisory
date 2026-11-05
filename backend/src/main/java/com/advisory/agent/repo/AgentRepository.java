@@ -2,9 +2,8 @@ package com.advisory.agent.repo;
 
 import com.advisory.agent.domain.Agent;
 import com.advisory.agent.domain.AgentSnapshot;
+import com.advisory.common.jdbc.JdbcRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -21,7 +20,7 @@ import java.util.Optional;
  * JSON 列用 {@code ::text} 取出后在此处交给 Jackson 映射，服务层因此只接触强类型值。</p>
  */
 @Repository
-public class AgentRepository {
+public class AgentRepository extends JdbcRepository {
 
     private static final String COLUMNS = """
             id, name, description, system_prompt, chat_model_id, embedding_model_id,
@@ -34,8 +33,6 @@ public class AgentRepository {
     private static final TypeReference<Map<Long, List<Long>>> NODE_SCOPE = new TypeReference<>() {
     };
 
-    private final JdbcTemplate jdbc;
-    private final ObjectMapper objectMapper;
     private final RowMapper<Agent> rowMapper = (rs, rowNum) -> new Agent(
             rs.getLong("id"),
             rs.getString("name"),
@@ -52,11 +49,6 @@ public class AgentRepository {
             rs.getInt("current_version"),
             rs.getTimestamp("created_at").toInstant(),
             rs.getTimestamp("updated_at").toInstant());
-
-    public AgentRepository(JdbcTemplate jdbc, ObjectMapper objectMapper) {
-        this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
-    }
 
     /**
      * 按主键读取 Agent，含 jsonb 列的解析。
@@ -159,8 +151,8 @@ public class AgentRepository {
                 snapshot.systemPrompt(),
                 snapshot.chatModelId(),
                 snapshot.embeddingModelId(),
-                write(snapshot.kbIds()),
-                write(snapshot.nodeScope()),
+                toJson(snapshot.kbIds()),
+                toJson(snapshot.nodeScope()),
                 snapshot.maxRounds(),
                 snapshot.topK(),
                 snapshot.temperature(),
@@ -187,8 +179,8 @@ public class AgentRepository {
                 snapshot.systemPrompt(),
                 snapshot.chatModelId(),
                 snapshot.embeddingModelId(),
-                write(snapshot.kbIds()),
-                write(snapshot.nodeScope()),
+                toJson(snapshot.kbIds()),
+                toJson(snapshot.nodeScope()),
                 snapshot.maxRounds(),
                 snapshot.topK(),
                 snapshot.temperature(),
@@ -253,34 +245,18 @@ public class AgentRepository {
                 .findFirst();
     }
 
-    private String write(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("Agent 的 JSON 字段无法序列化", e);
-        }
-    }
-
-    private List<Long> readLongList(String json) {
-        if (json == null || json.isBlank()) {
+    private List<Long> readLongList(String value) {
+        if (value == null || value.isBlank()) {
             return List.of();
         }
-        try {
-            return objectMapper.readValue(json, LONG_LIST);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agents.kb_ids 中存的不是合法 JSON", e);
-        }
+        return fromJson(value, LONG_LIST, "agents.kb_ids");
     }
 
-    private Map<Long, List<Long>> readNodeScope(String json) {
-        if (json == null || json.isBlank()) {
+    private Map<Long, List<Long>> readNodeScope(String value) {
+        if (value == null || value.isBlank()) {
             return Map.of();
         }
-        try {
-            return objectMapper.readValue(json, NODE_SCOPE);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agents.node_scope 中存的不是合法 JSON", e);
-        }
+        return fromJson(value, NODE_SCOPE, "agents.node_scope");
     }
 
     /**

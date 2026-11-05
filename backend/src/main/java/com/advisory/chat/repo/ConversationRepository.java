@@ -1,7 +1,7 @@
 package com.advisory.chat.repo;
 
 import com.advisory.chat.domain.Conversation;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.advisory.common.jdbc.JdbcRepository;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -16,14 +16,13 @@ import java.util.Optional;
  * 这样即便某处忘了传过滤条件，也只会多返回而不是泄露他人会话。</p>
  */
 @Repository
-public class ConversationRepository {
+public class ConversationRepository extends JdbcRepository {
 
     private static final String COLUMNS = """
             c.id, c.agent_id, a.name AS agent_name, c.agent_version, c.user_id, c.title,
             c.created_at, c.updated_at
             """;
 
-    private final JdbcTemplate jdbc;
 
     private final RowMapper<Conversation> rowMapper = (rs, rowNum) -> new Conversation(
             rs.getLong("id"),
@@ -35,9 +34,6 @@ public class ConversationRepository {
             rs.getTimestamp("created_at").toInstant(),
             rs.getTimestamp("updated_at").toInstant());
 
-    public ConversationRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     /** 新建会话并锁定 Agent 版本。 */
     public long insert(long agentId, int agentVersion, long userId, String title) {

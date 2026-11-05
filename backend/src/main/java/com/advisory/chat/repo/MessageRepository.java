@@ -3,12 +3,11 @@ package com.advisory.chat.repo;
 import com.advisory.chat.domain.Message;
 import com.advisory.chat.domain.MessageStatus;
 import com.advisory.chat.orchestration.TokenUsage;
+import com.advisory.common.jdbc.JdbcRepository;
 import com.advisory.knowledge.retrieval.RetrievedChunk;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -23,7 +22,7 @@ import java.util.Optional;
  * 是为了不让一条长时间的流占着事务不放。</p>
  */
 @Repository
-public class MessageRepository {
+public class MessageRepository extends JdbcRepository {
 
     private static final Logger log = LoggerFactory.getLogger(MessageRepository.class);
 
@@ -34,9 +33,8 @@ public class MessageRepository {
 
     private static final TypeReference<List<RetrievedChunk>> CITATIONS = new TypeReference<>() {
     };
-
-    private final JdbcTemplate jdbc;
-    private final ObjectMapper objectMapper;
+    private static final TypeReference<TokenUsage> USAGE = new TypeReference<>() {
+    };
 
     private final RowMapper<Message> rowMapper = (rs, rowNum) -> new Message(
             rs.getLong("id"),
@@ -48,11 +46,6 @@ public class MessageRepository {
             readUsage(rs.getString("token_usage")),
             rs.getObject("latency_ms", Long.class),
             rs.getTimestamp("created_at").toInstant());
-
-    public MessageRepository(JdbcTemplate jdbc, ObjectMapper objectMapper) {
-        this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
-    }
 
     /** 插入消息，助手消息初始为 PENDING。 */
     public long insert(long conversationId, String role, String content, MessageStatus status) {
@@ -107,36 +100,22 @@ public class MessageRepository {
                 """, content, MessageStatus.FAILED.name(), latencyMs, id);
     }
 
-    private List<RetrievedChunk> readCitations(String json) {
-        if (json == null || json.isBlank()) {
-            return List.of();
-        }
-        try {
-            return objectMapper.readValue(json, CITATIONS);
-        } catch (Exception e) {
-            // 引用数据解析失败时不能连累答案本身：宁可少显示引用，也要把回答展示出来。
-            // 记 DEBUG：降级是故意的，但必须留下线索，否则「引用突然没了」没法追。
-            log.debug("引用数据解析失败，按空引用返回: {}", e.getMessage());
-            return List.of();
-        }
+    /**
+     * 引用是展示性数据：解析失败时降级为空，不能连累答案本身——宁可少显示引用，也要把回答展示出来。
+     * 降级由基类记 DEBUG，保留线索。
+     */
+    private List<RetrievedChunk> readCitations(String value) {
+        return tryFromJson(value, CITATIONS).orElse(List.of());
     }
 
-    private TokenUsage readUsage(String json) {
-        if (json == null || json.isBlank()) {
-            return TokenUsage.ZERO;
-        }
-        try {
-            return objectMapper.readValue(json, TokenUsage.class);
-        } catch (Exception e) {
-            log.debug("用量数据解析失败，按零用量返回: {}", e.getMessage());
-            return TokenUsage.ZERO;
-        }
+    private TokenUsage readUsage(String value) {
+        return tryFromJson(value, USAGE).orElse(TokenUsage.ZERO);
     }
 
     private String writeJson(Object value) {
         try {
-            return objectMapper.writeValueAsString(value == null ? List.of() : value);
-        } catch (Exception e) {
+            return toJson(value == null ? List.of() : value);
+        } catch (IllegalStateException e) {
             log.debug("载荷序列化失败，按空数组写入: {}", e.getMessage());
             return "[]";
         }

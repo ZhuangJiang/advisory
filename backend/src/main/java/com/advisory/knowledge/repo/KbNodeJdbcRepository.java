@@ -1,7 +1,7 @@
 package com.advisory.knowledge.repo;
 
 import com.advisory.knowledge.domain.KbNodeRow;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.advisory.common.jdbc.JdbcRepository;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -24,7 +24,7 @@ import java.util.Optional;
  * {@code findById} 读到的会是持久化上下文里的旧实体，而不是真正落库的那一行。</p>
  */
 @Repository
-public class KbNodeJdbcRepository {
+public class KbNodeJdbcRepository extends JdbcRepository {
 
     private static final String COLUMNS =
             "id, kb_id, parent_id, name, CAST(path AS text) AS path, sort_order";
@@ -37,11 +37,7 @@ public class KbNodeJdbcRepository {
             rs.getString("path"),
             rs.getInt("sort_order"));
 
-    private final JdbcTemplate jdbc;
 
-    public KbNodeJdbcRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     /** 直接从数据库读取单个节点，绕过一切 JPA 持久化上下文。 */
     public Optional<KbNodeRow> findById(long id) {

@@ -1,6 +1,6 @@
 package com.advisory.knowledge.retrieval;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.advisory.common.jdbc.JdbcRepository;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -25,7 +25,7 @@ import java.util.Map;
  * </ul>
  */
 @Repository
-public class RetrievalJdbcRepository {
+public class RetrievalJdbcRepository extends JdbcRepository {
 
     /**
      * 非空范围下的子树过滤：保留节点位于任一范围节点之下（含自身）的片段。
@@ -80,11 +80,7 @@ public class RetrievalJdbcRepository {
     public record KbMeta(Long embeddingModelId, String reindexStatus) {
     }
 
-    private final JdbcTemplate jdbc;
 
-    public RetrievalJdbcRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     /**
      * 批量读取知识库元数据；表中不存在的 id 不会出现在返回结果里。

@@ -2,8 +2,7 @@ package com.advisory.agent.repo;
 
 import com.advisory.agent.domain.AgentSnapshot;
 import com.advisory.agent.domain.AgentVersion;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.advisory.common.jdbc.JdbcRepository;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -17,10 +16,8 @@ import java.util.Optional;
  * {@link AgentSnapshot}，因此历史会话重放的是当初写进去的那份 JSON，绝不参考当前行。</p>
  */
 @Repository
-public class AgentVersionRepository {
+public class AgentVersionRepository extends JdbcRepository {
 
-    private final JdbcTemplate jdbc;
-    private final ObjectMapper objectMapper;
     private final RowMapper<AgentVersion> rowMapper = (rs, rowNum) -> new AgentVersion(
             rs.getLong("id"),
             rs.getLong("agent_id"),
@@ -28,19 +25,10 @@ public class AgentVersionRepository {
             readSnapshot(rs.getString("snapshot")),
             rs.getTimestamp("created_at").toInstant());
 
-    public AgentVersionRepository(JdbcTemplate jdbc, ObjectMapper objectMapper) {
-        this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
-    }
-
     /** 追加一个版本（只追加，不更新）。 */
     public void insert(long agentId, int version, AgentSnapshot snapshot) {
-        try {
-            jdbc.update("INSERT INTO agent_versions (agent_id, version, snapshot) VALUES (?, ?, ?::jsonb)",
-                    agentId, version, objectMapper.writeValueAsString(snapshot));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("Agent 快照无法序列化", e);
-        }
+        jdbc.update("INSERT INTO agent_versions (agent_id, version, snapshot) VALUES (?, ?, ?::jsonb)",
+                agentId, version, toJson(snapshot));
     }
 
     /** 按版本号倒序返回历史版本。 */
@@ -72,11 +60,7 @@ public class AgentVersionRepository {
         return count == null ? 0 : count;
     }
 
-    private AgentSnapshot readSnapshot(String json) {
-        try {
-            return objectMapper.readValue(json, AgentSnapshot.class);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agent_versions.snapshot 中存的不是合法 JSON", e);
-        }
+    private AgentSnapshot readSnapshot(String value) {
+        return fromJson(value, AgentSnapshot.class, "agent_versions.snapshot");
     }
 }
