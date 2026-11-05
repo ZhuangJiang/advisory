@@ -46,7 +46,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 12 用例
 mvn -f backend/advisory-server/pom.xml test       # 只跑主服务，需要 Docker（Testcontainers 起 PG/MinIO）
 mvn -f backend/mcp-server/weather-mcp/pom.xml test # 只跑天气 MCP，无需 Docker
 
@@ -154,12 +154,17 @@ powershell -File scripts/smoke.ps1
   网关统计回调次数，为 0 就抛错让编排器回退——编造的实时数据比「查不到」更糟。
 - 联调用例 `McpToolRegistryLiveTest` 靠 `WEATHER_MCP_URL` 环境变量开启，默认跳过；它真的会打一次
   `tools/call`，不是只握手。
+- **模型必须支持 function calling**：`qwen2.5:7b` / `llama3.1:8b` 可用，`deepseek-r1` 不行（静默不调用）。
+  换 Agent 的 chat 模型后，先确认 Ollama 的 `/api/chat` 响应里有 `message.tool_calls`。
+- **容器访问不到 WSL 里的 Ollama**：Docker Desktop 对 WSL 虚拟网卡没有路由，`172.25.x.x:11434` 会
+  `Host is unreachable`。容器场景把提供商 `base_url` 改成 `http://host.docker.internal:11434`
+  （Windows 侧 `localhost:11434` 靠 WSL2 转发才通，容器内不能用它）。本地 `mvn` 跑后端则两种地址都行。
 
 ## 验证清单
 
 改完代码按影响面选，**不要只看编译通过**：
 
-- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 271 用例 + weather-mcp 11 用例，必须全绿）
+- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 271 用例 + weather-mcp 12 用例，必须全绿）
 - 只改 MCP 服务：`mvn -f backend/mcp-server/weather-mcp/pom.xml test`（无需 Docker，秒级）
 - 前端逻辑：`npm --prefix frontend run test` 与 `npm --prefix frontend run build`
 - 动了安全链 / SSE / 预签名 / 健康检查：必须 `docker compose up -d --build` 后在真容器里验一遍

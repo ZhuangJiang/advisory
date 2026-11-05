@@ -484,6 +484,17 @@ ping      {}                             每 15s
   `McpToolCallback` 替代，避免前缀污染模型上下文与推理摘要。
 - 只有**工具执行**失败才断开 MCP 连接；模型侧故障（401、不支持 function calling）与 MCP 健康无关。
 
+要让对话真的调起工具，除 MCP 连上之外还需要两件事：
+
+1. **Agent 绑定的 chat 模型支持 function calling**。`qwen2.5:7b`、`llama3.1:8b` 实测可用；
+   `deepseek-r1` 不行——它接受 `tools` 参数却不调用，会直接按记忆编天气（被上面的调用计数校验拦下）。
+   判断方法：直接问 Ollama，
+   `POST /api/chat` 带 `tools`，响应里应出现 `message.tool_calls` 而不是纯文本。
+2. **backend 能访问到提供商地址**。本地 `mvn spring-boot:run` 用 WSL 的 IP（`http://172.25.32.90:11434`）
+   或 `http://localhost:11434`（WSL2 会把端口转发到 Windows）都行；**容器里必须换成
+   `http://host.docker.internal:11434`**——Docker Desktop 到 WSL 虚拟网卡没有路由，会报
+   `Host is unreachable`，表现成「工具作答失败，回退到知识库检索」。
+
 ---
 
 ### 三条不变式

@@ -67,7 +67,7 @@ docker compose ps          # postgres / minio / backend / frontend / weather-mcp
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 12 用例
 mvn -f backend/advisory-server/pom.xml test # 只跑后端主服务
 mvn -f backend/mcp-server/weather-mcp/pom.xml test   # 只跑天气 MCP，无需 Docker
 npm --prefix frontend run test       # 37 用例
@@ -127,6 +127,13 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
 - **对话里怎么用**：`advisory-server` 会在后台连上这个端点（`WEATHER_MCP_URL`）。
   问「北京今天天气怎么样」时编排器直接调工具作答、不检索知识库；MCP 没起来时自动回退到原来的检索流程，
   不会让会话失败。`MCP_ENABLED=false` 可整体关掉。
+- **能调起来的前提**（缺一不可，两点都容易踩）：
+  1. Agent 绑定的 chat 模型**支持 function calling**。`qwen2.5:7b`、`llama3.1:8b` 可以；
+     `deepseek-r1` 不行——它接受 `tools` 参数却从不调用，会凭记忆编造天气（被调用计数校验拦下）。
+  2. 提供商地址对 backend 可达。本地 `mvn` 跑后端用 WSL 的 IP 或 `http://localhost:11434`；
+     **容器里跑后端**要改成 `http://host.docker.internal:11434`，Docker Desktop 到 WSL 虚拟网卡没有路由。
+- 端口冲突：本地 IDE/`mvn` 已占 8081 时，容器用 `WEATHER_MCP_PORT=8082 docker compose up -d weather-mcp`；
+  容器之间仍走 `http://weather-mcp:8081`。
 - 客户端接入（以 Claude Desktop 为例）：
 
 ```json
