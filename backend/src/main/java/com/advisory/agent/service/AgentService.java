@@ -152,7 +152,7 @@ public class AgentService {
      */
     @Transactional
     public AgentResponse update(Long id, UpdateAgentRequest body) {
-        Agent current = agents.findByIdForUpdate(id)
+        Agent current = agents.findActiveByIdForUpdate(id)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
 
         String name = body.name() == null ? current.name() : validateName(body.name());
@@ -182,7 +182,8 @@ public class AgentService {
         BigDecimal temperature = body.temperature() == null
                 ? current.temperature()
                 : validateTemperature(body.temperature());
-        boolean enabled = body.enabled() == null ? current.enabled() : body.enabled();
+        // 启停由专用端点维护；配置补丁不能顺手改状态，否则每次上下线都会多出一个空版本。
+        boolean enabled = current.enabled();
 
         int newVersion = current.currentVersion() + 1;
         AgentSnapshot snapshot = new AgentSnapshot(name, systemPrompt, chatModelId, embeddingModelId,
@@ -194,6 +195,28 @@ public class AgentService {
         }
         versions.insert(id, newVersion, snapshot);
         return AgentResponse.from(requireAgent(id));
+    }
+
+    /** 上线/下线：幂等，只改状态，不追加版本。 */
+    @Transactional
+    public AgentResponse setEnabled(Long id, boolean enabled) {
+        Agent current = agents.findActiveByIdForUpdate(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
+        if (current.enabled() != enabled) {
+            agents.updateEnabled(id, enabled);
+        }
+        return AgentResponse.from(agents.findActiveById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在")));
+    }
+
+    /** 上线。 */
+    public AgentResponse online(Long id) {
+        return setEnabled(id, true);
+    }
+
+    /** 下线：普通用户不能再新建会话，已有会话继续按锁定版本可用。 */
+    public AgentResponse offline(Long id) {
+        return setEnabled(id, false);
     }
 
     /** 删除 Agent；存在关联会话时返回 409。 */
@@ -210,7 +233,7 @@ public class AgentService {
     // ------------------------------------------------------------------ 校验
 
     private Agent requireAgent(Long id) {
-        return agents.findById(id)
+        return agents.findActiveById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
     }
 

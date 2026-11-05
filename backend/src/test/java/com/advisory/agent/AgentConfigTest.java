@@ -280,7 +280,86 @@ class AgentConfigTest extends IntegrationTestBase {
         assertTrue(reused > 0, "软删后名称必须可以复用");
     }
 
-    // ------------------------------------------------------------------ 5. 数值范围校验
+    // ------------------------------------------------------------------ 5. 上下线
+
+    @Test
+    void lifecycleChangesDoNotCreateVersions() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(false))
+                .andExpect(jsonPath("$.data.currentVersion").value(1));
+        assertEquals(List.of(1), versions(agentId));
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/online")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(true))
+                .andExpect(jsonPath("$.data.currentVersion").value(1));
+        assertEquals(List.of(1), versions(agentId));
+    }
+
+    @Test
+    void offlineAgentCannotStartNewConversationUntilOnline() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/conversations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"agentId\":" + agentId + ",\"title\":\"offline\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000));
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/online")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/conversations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"agentId\":" + agentId + ",\"title\":\"online\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void patchCannotChangeEnabledAndStillCreatesExactlyOneVersion() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        patchAgent(agentId, patchBody(Map.of("enabled", false, "topK", 30)));
+
+        mockMvc.perform(get("/api/agents/" + agentId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(true))
+                .andExpect(jsonPath("$.data.topK").value(30))
+                .andExpect(jsonPath("$.data.currentVersion").value(2));
+    }
+
+    @Test
+    void userCannotToggleAgentLifecycle() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40300));
+        mockMvc.perform(post("/api/agents/" + agentId + "/online")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40300));
+    }
+
+    // ------------------------------------------------------------------ 6. 数值范围校验
 
     @Test
     void rejectsInvalidConfigValues() throws Exception {

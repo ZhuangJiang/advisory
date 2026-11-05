@@ -185,6 +185,12 @@ public class AgentRepository {
                 id);
     }
 
+    /** 只切换在线状态并刷新时间，不触碰版本号。 */
+    public void updateEnabled(long id, boolean enabled) {
+        jdbc.update("UPDATE agents SET enabled = ?, updated_at = now()"
+                + " WHERE id = ? AND deleted_at IS NULL", enabled, id);
+    }
+
     /** 删除 Agent，版本行随级联清理。 */
     public void deleteById(long id) {
         jdbc.update("DELETE FROM agents WHERE id = ?", id);

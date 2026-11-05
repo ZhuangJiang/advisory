@@ -67,6 +67,20 @@ public class AgentController {
         return ApiResponse.ok(service.update(id, body));
     }
 
+    /** 上线：只改状态，不生成新版本。 */
+    @PostMapping("/api/agents/{id}/online")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<AgentResponse> online(@PathVariable Long id) {
+        return ApiResponse.ok(service.online(id));
+    }
+
+    /** 下线：普通用户不能再新建会话，已有会话继续可用。 */
+    @PostMapping("/api/agents/{id}/offline")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<AgentResponse> offline(@PathVariable Long id) {
+        return ApiResponse.ok(service.offline(id));
+    }
+
     /** 删除 Agent；仍有关联会话时返回 409，需先归档。 */
     @DeleteMapping("/api/agents/{id}")
     @PreAuthorize("hasRole('ADMIN')")
