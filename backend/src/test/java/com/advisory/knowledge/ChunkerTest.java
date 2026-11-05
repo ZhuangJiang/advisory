@@ -9,6 +9,11 @@ import com.advisory.knowledge.ingest.ParsedSection;
 import com.advisory.knowledge.ingest.StructureAwareChunker;
 import com.advisory.knowledge.ingest.TextChunk;
 import com.advisory.knowledge.ingest.TikaDocumentParser;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
@@ -222,6 +227,23 @@ class ChunkerTest {
     }
 
     @Test
+    void parsesPdfTextWithoutContainerDetectionCrash() throws IOException {
+        // 回归用例：PDF 不是 ZIP，Tika 的容器探测会走到 commons-compress 的 tar/checksum 分支。
+        // 一旦 commons-io 被依赖冲突压回 2.15.x（缺 ChecksumInputStream），这里就会抛
+        // NoClassDefFoundError，而所有 docx（ZIP 魔数直接命中）照旧能解析——线上表现为
+        // 「docx 全绿、PDF 全部卡在 PARSING」。见 pom.xml 里 commons-io 版本锁定的注释。
+        byte[] pdf = pdfFixture();
+
+        ParsedDocument doc = parser.parse(new ByteArrayInputStream(pdf), "report.pdf");
+
+        // 这份 PDF 没有标题，sections 会是空的（正文归入默认节），所以只校验正文与切片都拿到内容。
+        assertThat(doc.markdown())
+                .contains("Carbon quota report")
+                .contains("verify its emission boundary");
+        assertThat(chunker.split(doc, CONFIG)).isNotEmpty();
+    }
+
+    @Test
     void rejectsUnparseableFile() {
         byte[] garbage = "this is definitely not a docx archive".getBytes(StandardCharsets.US_ASCII);
 
@@ -327,8 +349,32 @@ class ChunkerTest {
         }
     }
 
-    /** 注册 Heading1..Heading6 样式；Tika 是按样式名匹配的，光有样式 id 不够。 */
-    private static void addHeadingStyles(XWPFDocument document) {
+    /**
+     * 用 PDFBox 现场生成 .pdf 夹具。只写 ASCII 文本，避免测试依赖系统里是否装了中文字体。
+     */
+    private static byte[] pdfFixture() throws IOException {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(PDType1Font.HELVETICA_BOLD, 16);
+                content.newLineAtOffset(60, 740);
+                content.showText("Carbon quota report");
+                content.endText();
+                content.beginText();
+                content.setFont(PDType1Font.HELVETICA, 11);
+                content.newLineAtOffset(60, 700);
+                content.showText("The steel plant must verify its emission boundary every year.");
+                content.endText();
+            }
+            document.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    /** 注册 Heading1..Heading6 样式；Tika 是按样式名匹配的，光有样式 id 不够。 */    private static void addHeadingStyles(XWPFDocument document) {
         XWPFStyles styles = document.createStyles();
         for (int level = 1; level <= 6; level++) {
             CTStyle ctStyle = CTStyle.Factory.newInstance();

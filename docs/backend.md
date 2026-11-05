@@ -51,6 +51,7 @@ com.advisory
 | 模型客户端不用 Spring AI 自动配置，按 `models` 行手工构造 | 一个进程要同时对接多个提供商；自动配置只能装一个 |
 | 没有 vector-store bean | 向量检索是 `RetrievalJdbcRepository` 里的一条 SQL，Spring AI 只负责算向量 |
 | JDBC 仓储统一继承 `common.jdbc.JdbcRepository` | `JdbcTemplate` 与 `ObjectMapper` 是容器单例，没必要每个仓储各声明一份构造参数；基类同时统一了 jsonb 的两种失败语义（持久化路径抛、展示性数据降级） |
+| `commons-io` 在 `pom.xml` 里用 `commons-io.version` **显式钉版**（当前 2.16.1） | Tika 2.9.2 的父 POM 把 `commons-io` 锁在 2.15.1，而 MinIO 带进来的 `commons-compress` 1.27.1 用到了 2.16.0 才有的 `org.apache.commons.io.input.ChecksumInputStream`。Maven 就近选中 2.15.1 时，任何走压缩包探测的文档（PDF 必走）会抛 `NoClassDefFoundError`——而 docx 命中 ZIP 魔数提前返回，看起来「只有 PDF 坏」。升级 Tika 或 MinIO 时必须复核这一行 |
 
 ---
 
@@ -459,7 +460,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/pom.xml test` → **217 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/pom.xml test` → **232 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 
 | 类型 | 位置 | 做法 |
 |---|---|---|
@@ -517,4 +518,7 @@ ping      {}                             每 15s
 - **access token 无法即时失效**：登出只吊销 refresh token，access token 靠 30 分钟有效期自然收敛。
 - **检索质量未调优**：RRF 的 k=60 与 topK 默认值都是常用起点，没有针对中文语料做过评测。
 - **解析只覆盖 Tika 支持的格式**，且按字符数（不是 token 数）切分，`token_count` 是估算值。
+- **解析期的 `Error` 也会落 `FAILED`**：`runPipeline` 除了 `Exception` 还兜 `Error`（缺依赖的
+  `NoClassDefFoundError` 就是这一类），先把文档置 `FAILED` 再把错误抛给队列线程记录。否则异常绕过
+  `Exception` 分支，文档会永远停在 `PARSING`，前端一直转圈、连重试按钮都不出现。
 - **审计只读**：没有导出、没有保留期策略。

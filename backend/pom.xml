@@ -24,6 +24,13 @@
         <minio.version>8.5.17</minio.version>
         <jjwt.version>0.12.6</jjwt.version>
         <tika.version>2.9.2</tika.version>
+        <!--
+            tika-parent 2.9.2 把 commons-io 锁在 2.15.1，而 minio 带来的 commons-compress 1.27.1
+            用到了 2.16.0 才有的 org.apache.commons.io.input.ChecksumInputStream。Maven 就近选中
+            2.15.1 时，任何走压缩包探测的文档（PDF、以及部分 docx）解析都会抛 NoClassDefFoundError。
+            这里显式钉到 commons-compress 1.27.1 自己声明的 2.16.1。
+        -->
+        <commons-io.version>2.16.1</commons-io.version>
         <spring-ai.version>1.0.9</spring-ai.version>
     </properties>
 
@@ -91,6 +98,15 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>
             <version>${tika.version}</version>
+        </dependency>
+        <!--
+            显式声明而不是只写 dependencyManagement：声明为直接依赖后版本距离为 1，
+            稳压 tika-core 传递进来的 2.15.1。升级 Tika / commons-compress 时请一并复核这个版本。
+        -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>${commons-io.version}</version>
         </dependency>
 
         <dependency>

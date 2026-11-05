@@ -43,7 +43,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 217 用例，需要 Docker（Testcontainers 起 PG/MinIO）
+mvn -f backend/pom.xml test                 # 232 用例，需要 Docker（Testcontainers 起 PG/MinIO）
 
 # 前端
 npm --prefix frontend run test              # 47 用例（vitest + jsdom）
@@ -106,6 +106,7 @@ powershell -File scripts/smoke.ps1
 | 签名时多一次 `?location=` 请求、甚至超时 | `MinioClient` 默认先查 region | 固定 `MINIO_REGION` |
 | 容器 healthy 却 `connection refused` | 健康检查用 `localhost`，容器内先解析 `::1`，JVM 只监听 IPv4 | 一律写 `127.0.0.1` |
 | 挂载的 `.sh` 报 `set: not found` | CRLF 让 `set -eu\r` 失效 | `.gitattributes` 固定 `*.sh`/`Dockerfile`/`*.conf`/`*.yml` 为 LF |
+| PDF 解析偶发 `NoClassDefFoundError: org/apache/commons/io/input/ChecksumInputStream` | tika-parent 2.9.2 把 commons-io 钉在 2.15.1，MinIO 带进来的 commons-compress 1.27.1 却用了 2.16.0 才有的类；只有走压缩包探测的路径（PDF）触发，docx 命中 ZIP 魔数提前返回，表现得像「只有 PDF 坏」 | 升级 Tika / MinIO 时复核 `backend/pom.xml` 的 `commons-io.version`（现 2.16.1）；回归用例 `ChunkerTest#parsesPdfTextWithoutContainerDetectionCrash` |
 | 清夹具数据时外键报错 | `agents`/`knowledge_bases` 对 `models` 是 `ON DELETE RESTRICT` | 先删 agent 与知识库，再删提供商 |
 | 集成用例改动 `admin` 后别的类挂了 | 整套件共用一个容器数据库 | 夹具自建用户，永不改引导管理员 |
 | 前端改了 token 但界面仍是旧的 | 把 token 拷进了 `ref` | 从 storage 派生 + 读 `tokenRevision` |

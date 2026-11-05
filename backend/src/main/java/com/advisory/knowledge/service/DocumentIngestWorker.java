@@ -478,6 +478,19 @@ public class DocumentIngestWorker implements ApplicationRunner {
         } catch (Exception e) {
             log.warn("Document {} ingestion failed", documentId, e);
             fail(documentId, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        } catch (Error e) {
+            // 依赖缺类这类 Error 也必须落成 FAILED：只交给线程池兜底打日志的话，文档会永远停在
+            // PARSING/CHUNKING 这类中间态，前端一直转圈，重试按钮也不会出现。落库后再抛出去，
+            // 让队列线程按原样记录，不吞掉致命错误。
+            log.error("Document {} ingestion failed with an error", documentId, e);
+            try {
+                fail(documentId, e.getClass().getSimpleName()
+                        + (e.getMessage() == null ? "" : ": " + e.getMessage()));
+            } catch (RuntimeException suppressed) {
+                // 写状态本身失败（例如数据库也没了）时不能盖掉原始 Error，挂成 suppressed 再抛原异常。
+                e.addSuppressed(suppressed);
+            }
+            throw e;
         }
     }
 
