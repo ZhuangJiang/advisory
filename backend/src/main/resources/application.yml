@@ -1,6 +1,11 @@
 server:
   port: 8080
 spring:
+  # 本项目的认证完全走自研的 JwtAuthFilter + POST /api/auth/login，没有 UserDetailsService。
+  # 不排除这条自动配置，Spring Boot 会在启动时建一个内存用户并往控制台打
+  # 「Using generated security password: ...」——既用不上，又容易被当成登录故障的线索。
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/advisory}
     username: ${DB_USER:advisory}
