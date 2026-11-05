@@ -1,5 +1,7 @@
 server:
-  port: 8080
+  # 端口约定：后端服务 20001–20999（本服务 20001），MCP 服务 21001–21999（weather-mcp 21001）。
+  # 新增服务按段位顺延，避免与常见默认端口（8080/8081 等）撞车。
+  port: ${SERVER_PORT:20001}
 spring:
   # 本项目的认证完全走自研的 JwtAuthFilter + POST /api/auth/login，没有 UserDetailsService。
   # 不排除这条自动配置，Spring Boot 会在启动时建一个内存用户并往控制台打
@@ -62,7 +64,7 @@ app:
     # 外部 MCP 工具服务（weather-mcp）。连接在后台线程完成并定期重试：MCP 没起来、
     # 正在重启都不会影响主服务启动与普通问答，只是那段时间天气问题会走知识库检索。
     enabled: ${MCP_ENABLED:true}
-    sse-url: ${WEATHER_MCP_URL:http://localhost:8081/sse}
+    sse-url: ${WEATHER_MCP_URL:http://localhost:21001/sse}
     # 单次 MCP 请求超时。要明显小于编排器单步 60 秒预算，工具卡住时才来得及降级。
     request-timeout: ${MCP_REQUEST_TIMEOUT:20s}
     retry-interval: ${MCP_RETRY_INTERVAL:30s}

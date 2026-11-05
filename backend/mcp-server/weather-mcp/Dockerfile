@@ -27,5 +27,5 @@ WORKDIR /app
 RUN addgroup -S weather && adduser -S weather -G weather
 COPY --from=build /build/app.jar /app/app.jar
 USER weather
-EXPOSE 8081
+EXPOSE 21001
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-Dfile.encoding=UTF-8", "-jar", "/app/app.jar"]

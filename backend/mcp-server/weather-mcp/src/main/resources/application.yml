@@ -1,5 +1,6 @@
 server:
-  port: ${SERVER_PORT:8081}
+  # 端口约定：MCP 服务 21001–21999。weather-mcp 占 21001，后续 MCP 服务从 21002 顺延。
+  port: ${SERVER_PORT:21001}
 
 spring:
   application:

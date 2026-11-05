@@ -28,5 +28,5 @@ WORKDIR /app
 RUN addgroup -S advisory && adduser -S advisory -G advisory
 COPY --from=build /build/app.jar /app/app.jar
 USER advisory
-EXPOSE 8080
+EXPOSE 20001
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-Dfile.encoding=UTF-8", "-jar", "/app/app.jar"]

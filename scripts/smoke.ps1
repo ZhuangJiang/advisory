@@ -33,7 +33,8 @@ param(
     # Public entry point (nginx): the SPA and /api.
     [string]$BaseUrl = 'http://localhost',
     # Actuator is not exposed through nginx on purpose; it is reachable on the backend port only.
-    [string]$BackendUrl = 'http://localhost:8080',
+    # 端口约定：后端服务 20001–20999（advisory-server = 20001），MCP 服务 21001–21999。
+    [string]$BackendUrl = 'http://localhost:20001',
     [string]$AdminUsername = 'admin',
     [string]$AdminPassword = $(if ($env:SMOKE_ADMIN_PASSWORD) { $env:SMOKE_ADMIN_PASSWORD } else { 'admin' }),
     [string]$AdminNewPassword = 'Admin-Passw0rd!',

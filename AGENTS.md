@@ -30,8 +30,8 @@ backend/                        Maven 聚合工程（packaging=pom）：锁 JDK 
       audit/          管理员只读审计
     src/main/resources/db/migration/   Flyway；新增迁移从 V6 起，禁止改已发布的 V1–V5
   mcp-server/                   MCP 服务族聚合（packaging=pom）：一个子模块 = 一个独立进程
-    weather-mcp/                天气 MCP（Spring AI MCP Server，SSE :8081，Open-Meteo，无数据库）
-frontend/           Vue 3 SPA（Vite；/api 代理到 8080，生产由 nginx 反代）
+    weather-mcp/                天气 MCP（Spring AI MCP Server，SSE :21001，Open-Meteo，无数据库）
+frontend/           Vue 3 SPA（Vite；/api 代理到 20001，生产由 nginx 反代）
   src/api/          唯一 HTTP 出口（client.ts + session.ts + sse.ts）
   src/stores/       Pinia：auth、chat
   src/pages/        路由页面；components/ 复用组件
@@ -58,17 +58,22 @@ npm --prefix frontend run build             # vue-tsc --noEmit + vite build
 docker compose up -d --build
 docker compose ps                            # 五个长驻服务均 healthy
 curl http://localhost/                       # SPA
-curl http://localhost/actuator/health        # {"status":"UP"}
-curl http://localhost:8081/actuator/health   # weather-mcp
+curl http://localhost:20001/actuator/health  # {"status":"UP"}
+curl http://localhost:21001/actuator/health  # weather-mcp
 
 # 冒烟（需真实模型；未配置时以退出码 2 明确跳过，不会假报成功）
 powershell -File scripts/smoke.ps1
 ```
 
-本地开发：`docker compose up -d postgres minio minio-init`，再 `mvn -f backend/advisory-server/pom.xml spring-boot:run` 与 `npm --prefix frontend run dev`（5173 代理到 8080）。天气 MCP 单独起：`mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run`（8081，离线用 `WEATHER_PROVIDER=stub`）。
+本地开发：`docker compose up -d postgres minio minio-init`，再 `mvn -f backend/advisory-server/pom.xml spring-boot:run` 与 `npm --prefix frontend run dev`（5173 代理到 20001）。天气 MCP 单独起：`mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run`（21001，离线用 `WEATHER_PROVIDER=stub`）。
 
 ## 不可违反的约定
 
+- **端口分段**：后端服务 **20001–20999**（`advisory-server` = 20001，新增后端服务从 20002 顺延），
+  MCP 服务 **21001–21999**（`weather-mcp` = 21001，新增 MCP 服务从 21002 顺延）。基础设施保留默认：
+  PostgreSQL 5432、MinIO 9000/9001、前端 80（dev 5173）。服务端口用 `SERVER_PORT`（Spring Boot 原生属性）
+  覆盖，容器到宿主的映射分别用 `BACKEND_PORT` / `WEATHER_MCP_PORT`。**新增服务一律先在段位内领号，
+  不许占用 80/8080/8081 这类通用端口**。
 - **响应体**一律 `{code,message,data}`；错误码见 `common/error/ErrorCode`（完整表在 `docs/backend.md` §4）。SSE 端点例外：直接返回 `text/event-stream`，建立前的错误仍是 JSON 信封。
 - **SSE 帧序**：`meta`（首帧，带 `messageId`，断线重连句柄；刚给会话命名时额外带 `title`）→ `step` × N → `delta` → `citations` → `done`；`ping` 每 15s；整体 180s 超时。改这里必须同步 `frontend/src/api/sse.ts`、`SseStepSink` 与 `docs/backend.md` §9。
 - **PLAN 只执行一次**：`round` 从 1 开始，RETRIEVE→REFLECT 每轮重复，`maxRounds` 封顶；证据不足或超时以 `TRUNCATED` 结束，不抛 500。

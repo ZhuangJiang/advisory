@@ -81,14 +81,15 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       # 天气 MCP 服务（独立容器）。刻意不加 depends_on：连不上时天气问题回退到知识库检索，
       # 不能让 MCP 的启停决定问答主链路能否启动。
-      WEATHER_MCP_URL: http://weather-mcp:8081/sse
+      WEATHER_MCP_URL: http://weather-mcp:21001/sse
     ports:
-      - "8080:8080"
+      # 端口约定：后端服务 20001–20999。容器内固定 20001，宿主端可覆盖（BACKEND_PORT）。
+      - "${BACKEND_PORT:-20001}:20001"
     healthcheck:
       # 运行时镜像是 alpine，自带 busybox wget，不必再装包。
       # 这里写 127.0.0.1 而不是 localhost：容器内 localhost 可能优先解析到 ::1，
       # 而 JVM/nginx 只监听 IPv4，结果一个本来健康的服务被报成「连接被拒绝」。
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q UP"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:20001/actuator/health | grep -q UP"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -111,7 +112,7 @@ services:
       retries: 6
 
   # 独立的 MCP 服务，与 backend 无依赖关系：backend 挂了它照样提供服务，
-  # 它挂了也不影响问答主链路。端口对外暴露，MCP 客户端直接连 http://<host>:8081/sse。
+  # 它挂了也不影响问答主链路。端口对外暴露，MCP 客户端直接连 http://<host>:21001/sse。
   weather-mcp:
     build:
       context: .
@@ -120,11 +121,11 @@ services:
     environment:
       WEATHER_PROVIDER: ${WEATHER_PROVIDER:-open-meteo}
     ports:
-      # 宿主端口可覆盖：本地 IDE / mvn 已在 8081 跑 weather-mcp 时，用 WEATHER_MCP_PORT=8082
-      # 起容器，避免端口冲突。容器之间仍通过 http://weather-mcp:8081 访问，与此无关。
-      - "${WEATHER_MCP_PORT:-8081}:8081"
+      # 端口约定：MCP 服务 21001–21999。容器内固定 21001，宿主端可覆盖（WEATHER_MCP_PORT），
+      # 用于本地 IDE / mvn 已占用 21001 的场景。容器之间仍走 http://weather-mcp:21001。
+      - "${WEATHER_MCP_PORT:-21001}:21001"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8081/actuator/health | grep -q UP"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:21001/actuator/health | grep -q UP"]
       interval: 10s
       timeout: 5s
       retries: 12

@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>两个环境变量同时存在才执行：</p>
  * <pre>
  * docker compose up -d weather-mcp
- * WEATHER_MCP_URL=http://localhost:8081/sse \
+ * WEATHER_MCP_URL=http://localhost:21001/sse \
  * OLLAMA_E2E_URL=http://172.25.32.90:11434 OLLAMA_E2E_MODEL=deepseek-r1:7b \
  * mvn -f backend/advisory-server/pom.xml test -Dtest=WeatherToolEndToEndLiveTest
  * </pre>

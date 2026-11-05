@@ -17,7 +17,7 @@ import java.time.Duration;
 @ConfigurationProperties("app.mcp")
 public record McpProperties(
         @DefaultValue("true") boolean enabled,
-        @DefaultValue("http://localhost:8081/sse") String sseUrl,
+        @DefaultValue("http://localhost:21001/sse") String sseUrl,
         @DefaultValue("20s") Duration requestTimeout,
         @DefaultValue("30s") Duration retryInterval) {
 

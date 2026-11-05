@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>默认不跑是刻意的——普通构建不该依赖「本机碰巧起着 weather-mcp」。要验证时：</p>
  * <pre>
  * docker compose up -d weather-mcp
- * WEATHER_MCP_URL=http://localhost:8081/sse mvn -f backend/advisory-server/pom.xml test -Dtest=McpToolRegistryLiveTest
+ * WEATHER_MCP_URL=http://localhost:21001/sse mvn -f backend/advisory-server/pom.xml test -Dtest=McpToolRegistryLiveTest
  * </pre>
  */
 @EnabledIfEnvironmentVariable(named = "WEATHER_MCP_URL", matches = ".+")

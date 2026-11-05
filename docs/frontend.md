@@ -40,12 +40,12 @@ frontend/
 
 ```bash
 npm --prefix frontend install
-npm --prefix frontend run dev      # 5173，/api 代理到 http://localhost:8080
+npm --prefix frontend run dev      # 5173，/api 代理到 http://localhost:20001
 npm --prefix frontend run build    # vue-tsc --noEmit + vite build
 npm --prefix frontend run test     # vitest run
 ```
 
-开发服务器代理 `/api` 到 8080（见 `vite.config.ts`），所以浏览器只面对一个源，
+开发服务器代理 `/api` 到 20001（见 `vite.config.ts`），所以浏览器只面对一个源，
 **SSE 不需要任何 CORS 配置**。生产由 nginx 做同样的事，并额外关掉 `proxy_buffering`。
 
 `build` 会先跑 `vue-tsc --noEmit`，类型错误直接中断构建——提交前跑一次比在 CI 里发现更省事。

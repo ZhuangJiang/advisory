@@ -66,7 +66,7 @@ export JAVA_HOME='/d/Program Files/Java/jdk-21.0.9+10'
 mvn -f backend/advisory-server/pom.xml spring-boot:run
 
 # 前端另开一个终端
-npm --prefix frontend run dev        # 5173，/api 代理到 8080
+npm --prefix frontend run dev        # 5173，/api 代理到 20001
 ```
 
 首次启动时的行为顺序值得知道：
@@ -100,7 +100,7 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 | `app.embedding.dimension` | `1024` | 固定维度，改它等于换掉整个向量契约 |
 | `RETRIEVAL_MIN_SIMILARITY` | `0.55` | 向量检索的相关性下限（整轮最高分）。低于它即判「知识库没有这方面内容」。默认值按 bge-m3 实测校准，换模型要重调；`0` 表示关闭 |
 | `MCP_ENABLED` | `true` | 是否接入外部 MCP 工具（天气）。关掉后行为与接入前完全一致 |
-| `WEATHER_MCP_URL` | `http://localhost:8081/sse` | 天气 MCP 服务的 SSE 端点；compose 里是 `http://weather-mcp:8081/sse` |
+| `WEATHER_MCP_URL` | `http://localhost:21001/sse` | 天气 MCP 服务的 SSE 端点；compose 里是 `http://weather-mcp:21001/sse` |
 | `MCP_REQUEST_TIMEOUT` | `20s` | 单次 MCP 请求超时。要明显小于编排器单步 60 秒预算，工具卡住才来得及降级 |
 | `MCP_RETRY_INTERVAL` | `30s` | 后台重连间隔。连不上只影响天气类问题（回退到检索），不影响其他问答 |
 

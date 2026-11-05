@@ -27,19 +27,19 @@ docker compose up -d postgres minio minio-init
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
 mvn -f backend/advisory-server/pom.xml spring-boot:run
 
-# 3. 运行前端（5173，/api 代理到 8080）
+# 3. 运行前端（5173，/api 代理到 20001）
 npm --prefix frontend install
 npm --prefix frontend run dev
 
 # 4. 健康检查
-curl http://localhost:8080/actuator/health
+curl http://localhost:20001/actuator/health
 ```
 
 首次启动由 Flyway 自动执行 `backend/advisory-server/src/main/resources/db/migration/` 下的迁移建表。
 
 - PostgreSQL：`localhost:5432`，库 / 用户 / 密码默认 `advisory` / `advisory` / `advisory`
 - MinIO S3 API：`localhost:9000`，控制台 `localhost:9001`
-- 后端：`localhost:8080`
+- 后端：`localhost:20001`；天气 MCP 服务：`localhost:21001`
 
 ## 生产部署（全栈容器）
 
@@ -53,7 +53,7 @@ docker compose ps          # postgres / minio / backend / frontend / weather-mcp
 - **必须设置 `MINIO_PUBLIC_ENDPOINT`**：预签名 URL 按该主机签名，浏览器要能直接访问（本地默认 `http://localhost:9000`，生产填对外域名）。留空则回落到 `MINIO_ENDPOINT`，此时容器内的 `minio:9000` 浏览器不可达，上传会失败。
 - 镜像构建默认使用阿里云 Maven 镜像；如需官方源，`docker compose build --build-arg MAVEN_MIRROR=`。
 - 后端单副本：文档解析任务与 SSE 编排在进程内，不支持横向扩容。
-- **MCP 服务独立于主链路**：`weather-mcp` 是单独容器（`8081`），backend 停了它照常服务，反之亦然。
+- **MCP 服务独立于主链路**：`weather-mcp` 是单独容器（`21001`），backend 停了它照常服务，反之亦然。
 
 ## 配置
 
@@ -102,7 +102,7 @@ powershell -File scripts/smoke.ps1
 backend/                       Maven 聚合工程（packaging=pom，锁版本与 JDK 21）
   advisory-server/             主后端（原 backend，artifact: advisory-server）
   mcp-server/                  MCP 服务族聚合（packaging=pom）
-    weather-mcp/               天气 MCP 服务（Spring AI MCP Server，SSE，:8081）
+    weather-mcp/               天气 MCP 服务（Spring AI MCP Server，SSE，:21001）
 frontend/         Vue 3 SPA（Vite；生产镜像由 nginx 托管）
 deploy/           nginx.conf、init-bucket.sh
 scripts/          smoke.ps1（端到端冒烟）、fake-model-server.mjs（本地模型桩）
@@ -121,7 +121,7 @@ $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
 mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
 ```
 
-- MCP 端点：`http://localhost:8081/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
+- MCP 端点：`http://localhost:21001/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
 - 工具：`get_current_weather(city)`、`get_weather_forecast(city, days)`
 - 离线开发：`WEATHER_PROVIDER=stub`，返回固定假数据，不访问公网
 - **对话里怎么用**：`advisory-server` 会在后台连上这个端点（`WEATHER_MCP_URL`）。
@@ -132,15 +132,18 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
      `deepseek-r1` 不行——它接受 `tools` 参数却从不调用，会凭记忆编造天气（被调用计数校验拦下）。
   2. 提供商地址对 backend 可达。本地 `mvn` 跑后端用 WSL 的 IP 或 `http://localhost:11434`；
      **容器里跑后端**要改成 `http://host.docker.internal:11434`，Docker Desktop 到 WSL 虚拟网卡没有路由。
-- 端口冲突：本地 IDE/`mvn` 已占 8081 时，容器用 `WEATHER_MCP_PORT=8082 docker compose up -d weather-mcp`；
-  容器之间仍走 `http://weather-mcp:8081`。
+- 端口约定：**后端服务 20001–20999**（`advisory-server` 20001，新增后端服务从 20002 顺延），
+  **MCP 服务 21001–21999**（`weather-mcp` 21001，新增 MCP 服务从 21002 顺延）；基础设施保留默认
+  （PostgreSQL 5432、MinIO 9000/9001、前端 80 / dev 5173）。
+- 端口冲突：本地 IDE/`mvn` 已占 21001 时，容器用 `WEATHER_MCP_PORT=21002 docker compose up -d weather-mcp`；
+  容器之间仍走 `http://weather-mcp:21001`。后端同理用 `BACKEND_PORT`。
 - 客户端接入（以 Claude Desktop 为例）：
 
 ```json
 {
   "mcpServers": {
     "weather": {
-      "url": "http://localhost:8081/sse"
+      "url": "http://localhost:21001/sse"
     }
   }
 }

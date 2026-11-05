@@ -17,7 +17,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // 后端端口约定：20001–20999（advisory-server = 20001）。改后端端口时同步这里。
+        target: 'http://localhost:20001',
         changeOrigin: true
       }
     }
