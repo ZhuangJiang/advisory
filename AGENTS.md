@@ -46,7 +46,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 253 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 269 用例（需 Docker）+ weather-mcp 11 用例
 mvn -f backend/advisory-server/pom.xml test       # 只跑主服务，需要 Docker（Testcontainers 起 PG/MinIO）
 mvn -f backend/mcp-server/weather-mcp/pom.xml test # 只跑天气 MCP，无需 Docker
 
@@ -138,11 +138,26 @@ powershell -File scripts/smoke.ps1
 - **协议测要真 SSE**：用 MCP SDK 的 `HttpClientSseClientTransport` 连随机端口跑 `initialize → tools/list → tools/call`。MockMvc 覆盖不到 SSE 握手与事件帧。
 - 端点固定 `/sse` + `/mcp/message`；改名要同步 README 的客户端配置示例。
 
+### 客户端侧（advisory-server 接入 MCP）
+
+- **连接必须在后台**：`McpToolRegistry` 启动时异步连、失败按 `MCP_RETRY_INTERVAL` 重试，对话线程只读内存。
+  MCP 是独立进程，它没起来不能拦住主服务启动，更不能让提问失败。
+- **工具是短路，不是主链路**：`gateway.hasLiveTools()` + `ToolRouting.wantsLiveData(question)` 同时成立才走；
+  超时/失败只 WARN，继续原四阶段流水线。**不要**把工具塞进 ANSWER 的普通作答里——那会破坏「无依据不作答」。
+- **路由词表必须保守**：只收语义明确的词（气温/下雨/预报），不收「温度/湿度」——碳核算与设备文档里同样常见，
+  误判等于拿天气答案盖掉业务问题。
+- **工具名不加前缀**：自写 `McpToolCallback` 代替 Spring AI 的 `SyncMcpToolCallback`（后者会加
+  `JavaSDKMCPClient_` 前缀，进模型上下文与推理摘要）。接入第二个 MCP 服务出现重名时，再按服务别名加。
+- **只有工具执行失败才 `invalidate()`**：模型侧故障（401、模型不支持 function calling）与 MCP 健康无关，
+  拿它去重连只会让每个问题都多一次握手。
+- 联调用例 `McpToolRegistryLiveTest` 靠 `WEATHER_MCP_URL` 环境变量开启，默认跳过；它真的会打一次
+  `tools/call`，不是只握手。
+
 ## 验证清单
 
 改完代码按影响面选，**不要只看编译通过**：
 
-- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 253 用例 + weather-mcp 11 用例，必须全绿）
+- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 269 用例 + weather-mcp 11 用例，必须全绿）
 - 只改 MCP 服务：`mvn -f backend/mcp-server/weather-mcp/pom.xml test`（无需 Docker，秒级）
 - 前端逻辑：`npm --prefix frontend run test` 与 `npm --prefix frontend run build`
 - 动了安全链 / SSE / 预签名 / 健康检查：必须 `docker compose up -d --build` 后在真容器里验一遍

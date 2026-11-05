@@ -27,4 +27,23 @@ public interface ChatModelGateway {
                                  String userPrompt, Class<T> type) {
         return chatStructured(modelId, systemPrompt, userPrompt, type);
     }
+
+    /**
+     * 是否接入了实时工具（MCP）。默认 {@code false}：假实现与未配置 MCP 的环境保持接入前的行为，
+     * 编排器不会为它们多走一条分支。实现方必须保证这是一次内存查询，不能在对话线程上做网络 I/O。
+     */
+    default boolean hasLiveTools() {
+        return false;
+    }
+
+    /**
+     * 带工具作答：模型可以调用外部工具（例如查天气）后再生成答案。
+     *
+     * <p>默认退回普通作答，因此已有实现与测试替身无需改动。生产实现会把工具回调交给 Spring AI 的
+     * {@code ChatClient}，由它完成「模型要求调用 → 执行工具 → 带着结果再问一次」的循环。</p>
+     */
+    default String chatWithTools(Long modelId, BigDecimal temperature, String systemPrompt,
+                                 String userPrompt) {
+        return chat(modelId, temperature, systemPrompt, userPrompt);
+    }
 }

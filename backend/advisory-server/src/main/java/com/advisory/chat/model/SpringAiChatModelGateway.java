@@ -1,14 +1,19 @@
 package com.advisory.chat.model;
 
+import com.advisory.chat.mcp.McpProperties;
+import com.advisory.chat.mcp.McpToolRegistry;
 import com.advisory.chat.orchestration.ChatModelGateway;
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.execution.ToolExecutionException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -33,9 +38,15 @@ import java.util.Objects;
 public class SpringAiChatModelGateway implements ChatModelGateway {
 
     private final ChatClientFactory clientFactory;
+    private final McpToolRegistry toolRegistry;
 
     public SpringAiChatModelGateway(ChatClientFactory clientFactory) {
+        this(clientFactory, new McpToolRegistry(McpProperties.disabled()));
+    }
+
+    public SpringAiChatModelGateway(ChatClientFactory clientFactory, McpToolRegistry toolRegistry) {
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
+        this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
     }
 
     @Override
@@ -46,6 +57,58 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
     @Override
     public String chat(Long modelId, BigDecimal temperature, String systemPrompt, String userPrompt) {
         return complete(modelId, temperature, systemPrompt, userPrompt);
+    }
+
+    @Override
+    public boolean hasLiveTools() {
+        return toolRegistry.available();
+    }
+
+    /**
+     * 带工具作答：把 MCP 工具注册给 Spring AI 的 {@code ChatClient}，由它完成
+     * 「模型要求调用 → 执行工具 → 带结果再问一次」的循环。
+     *
+     * <p>无工具可用时退回普通作答，编排器的工具分支因此不需要再做一次判空。</p>
+     *
+     * <p>只有<em>工具执行</em>失败才断开 MCP 连接：模型侧故障（不可达、401、不支持 function calling）
+     * 与 MCP 服务是否健康无关，拿它去重连只会让每个问题都多一次无谓握手。</p>
+     */
+    @Override
+    public String chatWithTools(Long modelId, BigDecimal temperature, String systemPrompt,
+                                String userPrompt) {
+        if (modelId == null) {
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定对话模型");
+        }
+        List<ToolCallback> tools = toolRegistry.toolCallbacks();
+        if (tools.isEmpty()) {
+            return complete(modelId, temperature, systemPrompt, userPrompt);
+        }
+
+        ChatClientFactory.ChatClient client = clientFactory.forChat(modelId, temperature);
+        ChatClient chatClient = ChatClient.builder(client.model())
+                .defaultOptions(client.options())
+                .defaultToolCallbacks(tools)
+                .build();
+        try {
+            String text = chatClient.prompt()
+                    .system(systemPrompt == null ? "" : systemPrompt)
+                    .user(userPrompt == null ? "" : userPrompt)
+                    .call()
+                    .content();
+            if (text == null || text.isBlank()) {
+                throw new AppException(ErrorCode.INTERNAL_ERROR, "模型返回了空响应");
+            }
+            return text;
+        } catch (AppException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            if (isToolExecutionFailure(e)) {
+                toolRegistry.invalidate();
+            }
+            String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            throw new AppException(ErrorCode.INTERNAL_ERROR,
+                    "工具调用失败 (model id=" + modelId + "): " + truncate(reason));
+        }
     }
 
     @Override
@@ -114,8 +177,7 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
     }
 
     /**
-     * 判断提供商是否在抱怨「prompt 超过上下文窗口」。
-     *
+     * 判断提供商是否在抱怨「prompt 超过上下文窗口」。     *
      * <p>各家措辞不同：Ollama 是 {@code exceed_context_size_error} / {@code exceeds the available
      * context size}，OpenAI 兼容端点是 {@code maximum context length}。判定要看整条 cause 链，
      * 因为 Spring AI 的 {@code NonTransientAiException} 可能把响应体包在里层。</p>
@@ -139,5 +201,21 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
 
     private static String truncate(String value) {
         return value.length() <= 300 ? value : value.substring(0, 300) + "...";
+    }
+
+    /**
+     * 失败是否出在「执行工具」这一步（而不是模型调用本身）。
+     *
+     * <p>Spring AI 用 {@code ToolExecutionException} 包装工具侧的任何失败，包括 MCP 传输断开、
+     * 工具抛异常、参数不符合 schema。只有这一类才值得重连 MCP；模型侧的错误（401、模型不存在、
+     * 该模型不支持 function calling）与工具服务健康与否无关。</p>
+     */
+    private static boolean isToolExecutionFailure(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof ToolExecutionException) {
+                return true;
+            }
+        }
+        return false;
     }
 }

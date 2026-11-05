@@ -74,6 +74,8 @@ public abstract class IntegrationTestBase {
         registry.add("app.embedding.gateway", () -> "stub");
         // 对话链路同理：由 TestChatModelGatewayConfig 提供一个按脚本应答的 ChatModelGateway。
         registry.add("app.chat.gateway", () -> "stub");
+        // MCP 工具服务是独立部署的，集成测试里不该有后台线程去连它。
+        registry.add("app.mcp.enabled", () -> "false");
     }
 
     @BeforeAll

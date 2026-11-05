@@ -174,9 +174,34 @@ public class ChatOrchestrator {
             return new OrchestrationResult(answer, steps, List.of(), false, TokenUsage.ZERO);
         }
 
+        // ---------------------------------------------------------------- 实时工具短路
+        // 「北京天气怎么样」这类问题在知识库里必然零召回，走完整流水线只会得到一句「没有找到依据」。
+        // 工具可用且问题明确要实时数据时，直接让模型调工具作答。工具失败或超时就当没发生过、
+        // 继续走检索——降级路径必须存在，否则一个 MCP 服务抖动就能让天气问题变成会话失败。
+        if (gateway.hasLiveTools() && ToolRouting.wantsLiveData(trimmedQuestion)) {
+            long toolStartedAt = System.nanoTime();
+            try {
+                String toolAnswer = timed(() -> gateway.chatWithTools(agent.chatModelId(),
+                        agent.temperature(), PromptTemplates.toolSystem(agent.name()),
+                        trimmedQuestion));
+                if (toolAnswer != null && !toolAnswer.isBlank()) {
+                    // 步骤等工具真正返回后才发：失败时事件流里不该留下一条半截的 ANSWER。
+                    String summary = "调用实时工具作答";
+                    events.onStepStart(1, Phase.ANSWER);
+                    steps.add(step(1, Phase.ANSWER, summary,
+                            "{\"citations\":0,\"tools\":true}", toolStartedAt));
+                    events.onStepEnd(1, Phase.ANSWER, "已生成");
+                    events.onDelta(Phase.ANSWER, toolAnswer);
+                    return new OrchestrationResult(toolAnswer, steps, List.of(), false,
+                            TokenUsage.ZERO);
+                }
+            } catch (RuntimeException e) {
+                log.warn("工具作答失败，回退到知识库检索: {}", e.getMessage());
+            }
+        }
+
         int maxRounds = Math.min(Math.max(agent.maxRounds(), 1), HARD_MAX_ROUNDS);
         long deadlineNanos = System.nanoTime() + overallTimeout.toNanos();
-
         LinkedHashMap<Long, RetrievedChunk> evidence = new LinkedHashMap<>();
         int consecutiveFailures = 0;
         boolean truncated = false;

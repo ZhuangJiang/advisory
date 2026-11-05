@@ -67,7 +67,7 @@ docker compose ps          # postgres / minio / backend / frontend / weather-mcp
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 253 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 269 用例（需 Docker）+ weather-mcp 11 用例
 mvn -f backend/advisory-server/pom.xml test # 只跑后端主服务
 mvn -f backend/mcp-server/weather-mcp/pom.xml test   # 只跑天气 MCP，无需 Docker
 npm --prefix frontend run test       # 37 用例
@@ -124,6 +124,9 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
 - MCP 端点：`http://localhost:8081/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
 - 工具：`get_current_weather(city)`、`get_weather_forecast(city, days)`
 - 离线开发：`WEATHER_PROVIDER=stub`，返回固定假数据，不访问公网
+- **对话里怎么用**：`advisory-server` 会在后台连上这个端点（`WEATHER_MCP_URL`）。
+  问「北京今天天气怎么样」时编排器直接调工具作答、不检索知识库；MCP 没起来时自动回退到原来的检索流程，
+  不会让会话失败。`MCP_ENABLED=false` 可整体关掉。
 - 客户端接入（以 Claude Desktop 为例）：
 
 ```json

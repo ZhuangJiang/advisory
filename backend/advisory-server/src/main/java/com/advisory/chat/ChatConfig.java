@@ -1,5 +1,7 @@
 package com.advisory.chat;
 
+import com.advisory.chat.mcp.McpProperties;
+import com.advisory.chat.mcp.McpToolRegistry;
 import com.advisory.chat.model.ChatClientFactory;
 import com.advisory.chat.model.SpringAiChatModelGateway;
 import com.advisory.chat.orchestration.ChatModelGateway;
@@ -9,6 +11,7 @@ import com.advisory.provider.service.CryptoService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>超时与 spec §11 一致（单步 60 秒、整体 180 秒），以毫秒为单位可配，测试才能把它改小而不必真的等。</p>
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(McpProperties.class)
 public class ChatConfig {
 
     @Bean
@@ -40,12 +44,22 @@ public class ChatConfig {
         return new ChatClientFactory(jdbc, cryptoService, contextWindowTokens);
     }
 
+    /**
+     * MCP 工具连接：启动后在后台连接并定期重试，对话线程只读内存里的工具列表。
+     * {@code app.mcp.enabled=false} 时完全空转，行为与接入前一致。
+     */
+    @Bean
+    public McpToolRegistry mcpToolRegistry(McpProperties mcpProperties) {
+        return new McpToolRegistry(mcpProperties);
+    }
+
     @Bean
     @ConditionalOnProperty(prefix = "app.chat", name = "gateway", havingValue = "real",
             matchIfMissing = true)
     /** 生产网关：仅在 app.chat.gateway 未设置或为 real 时注册。 */
-    public ChatModelGateway chatModelGateway(ChatClientFactory clientFactory) {
-        return new SpringAiChatModelGateway(clientFactory);
+    public ChatModelGateway chatModelGateway(ChatClientFactory clientFactory,
+                                             McpToolRegistry mcpToolRegistry) {
+        return new SpringAiChatModelGateway(clientFactory, mcpToolRegistry);
     }
 
     /** 装配编排器并传入生产网关。 */

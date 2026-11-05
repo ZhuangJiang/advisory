@@ -123,6 +123,17 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-ollama</artifactId>
         </dependency>
+        <!-- MCP 客户端：把外部 MCP 服务（weather-mcp）的工具接进对话。
+             spring-ai-mcp 自带 mcp-java-sdk 与 SyncMcpToolCallbackProvider；
+             spring-ai-client-chat 提供带工具执行的 ChatClient（手工构造，不走自动配置）。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

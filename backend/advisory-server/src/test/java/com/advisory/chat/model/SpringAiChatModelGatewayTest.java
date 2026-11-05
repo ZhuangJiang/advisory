@@ -1,5 +1,6 @@
 package com.advisory.chat.model;
 
+import com.advisory.chat.mcp.McpToolRegistry;
 import com.advisory.chat.orchestration.PlanResult;
 import com.advisory.common.error.AppException;
 import com.advisory.common.error.ErrorCode;
@@ -10,7 +11,11 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.execution.ToolExecutionException;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
@@ -18,8 +23,12 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Task 12：Spring AI 对话网关与编排器之间的契约。
@@ -119,7 +128,85 @@ class SpringAiChatModelGatewayTest {
         assertEquals(ErrorCode.MODEL_CONTEXT_EXCEEDED, failure.getCode());
     }
 
+    // ------------------------------------------------------------------ MCP 工具
+
+    /** 工具必须真的进到请求选项里；只「调用了 chatWithTools」不算数。 */
+    @Test
+    void chatWithToolsSendsToolCallbacksToTheModel() {
+        AtomicReference<Prompt> seen = new AtomicReference<>();
+        McpToolRegistry registry = mock(McpToolRegistry.class);
+        when(registry.available()).thenReturn(true);
+        when(registry.toolCallbacks()).thenReturn(List.of(weatherTool()));
+
+        SpringAiChatModelGateway gateway = gatewayWith(answering(seen, "北京当前晴，12 ℃。"), registry);
+
+        String answer = gateway.chatWithTools(7L, null, "sys", "北京今天天气怎么样？");
+
+        assertEquals("北京当前晴，12 ℃。", answer);
+        assertTrue(gateway.hasLiveTools());
+        assertTrue(seen.get().getOptions() instanceof ToolCallingChatOptions,
+                "工具回调需要随请求选项下发，否则模型根本不知道有工具");
+        List<String> toolNames = ((ToolCallingChatOptions) seen.get().getOptions())
+                .getToolCallbacks().stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .toList();
+        assertEquals(List.of("get_current_weather"), toolNames);
+        assertTrue(seen.get().getInstructions().get(1).getText().contains("北京今天天气怎么样"));
+    }
+
+    /** 没有工具时退回普通作答，编排器不需要再判一次空。 */
+    @Test
+    void chatWithToolsWithoutToolsBehavesLikePlainChat() {
+        AtomicReference<Prompt> seen = new AtomicReference<>();
+        McpToolRegistry registry = mock(McpToolRegistry.class);
+        when(registry.available()).thenReturn(false);
+        when(registry.toolCallbacks()).thenReturn(List.of());
+
+        SpringAiChatModelGateway gateway = gatewayWith(answering(seen, "普通回答"), registry);
+
+        assertEquals("普通回答", gateway.chatWithTools(7L, null, "sys", "问题"));
+        assertFalse(gateway.hasLiveTools());
+    }
+
+    /** 工具执行失败要断开 MCP 连接（否则下个问题会继续撞同一个死连接），并保留可读原因。 */
+    @Test
+    void toolExecutionFailureInvalidatesTheMcpConnection() {
+        McpToolRegistry registry = mock(McpToolRegistry.class);
+        when(registry.available()).thenReturn(true);
+        when(registry.toolCallbacks()).thenReturn(List.of(weatherTool()));
+        // 工具回调抛出的异常会被 Spring AI 包成 ToolExecutionException，这里直接模拟外层抛错
+        ChatModel failing = prompt -> {
+            throw new ToolExecutionException(weatherTool().getToolDefinition(),
+                    new IllegalStateException("MCP 服务已断开"));
+        };
+        SpringAiChatModelGateway gateway = gatewayWith(failing, registry);
+
+        AppException failure = assertThrows(AppException.class,
+                () -> gateway.chatWithTools(7L, null, "sys", "北京天气"));
+
+        assertEquals(ErrorCode.INTERNAL_ERROR, failure.getCode());
+        verify(registry).invalidate();
+    }
+
     // ------------------------------------------------------------------ 假实现
+
+    private static ToolCallback weatherTool() {
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return ToolDefinition.builder()
+                        .name("get_current_weather")
+                        .description("查询城市实时天气")
+                        .inputSchema("{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}")
+                        .build();
+            }
+
+            @Override
+            public String call(String toolInput) {
+                return "北京 晴 12 ℃";
+            }
+        };
+    }
 
     private static ChatModel answering(AtomicReference<Prompt> seen, String text) {
         return prompt -> {
@@ -138,5 +225,16 @@ class SpringAiChatModelGatewayTest {
             }
         };
         return new SpringAiChatModelGateway(factory);
+    }
+
+    private static SpringAiChatModelGateway gatewayWith(ChatModel model, McpToolRegistry registry) {
+        ChatOptions options = OpenAiChatOptions.builder().model("stub-model").build();
+        ChatClientFactory factory = new ChatClientFactory(null, null) {
+            @Override
+            public ChatClient forChat(long chatModelId, BigDecimal temperature) {
+                return new ChatClient(model, options);
+            }
+        };
+        return new SpringAiChatModelGateway(factory, registry);
     }
 }

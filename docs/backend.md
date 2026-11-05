@@ -99,6 +99,10 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 | `CHAT_CONTEXT_WINDOW_TOKENS` | `8192` | Ollama 请求里的 `num_ctx`，**同时**是编排器裁剪证据时用的窗口，两处共用一个值。Ollama 服务端默认只有 4096，跨轮证据很容易撑爆；显存紧张时调小，换大窗口模型时调大 |
 | `app.embedding.dimension` | `1024` | 固定维度，改它等于换掉整个向量契约 |
 | `RETRIEVAL_MIN_SIMILARITY` | `0.55` | 向量检索的相关性下限（整轮最高分）。低于它即判「知识库没有这方面内容」。默认值按 bge-m3 实测校准，换模型要重调；`0` 表示关闭 |
+| `MCP_ENABLED` | `true` | 是否接入外部 MCP 工具（天气）。关掉后行为与接入前完全一致 |
+| `WEATHER_MCP_URL` | `http://localhost:8081/sse` | 天气 MCP 服务的 SSE 端点；compose 里是 `http://weather-mcp:8081/sse` |
+| `MCP_REQUEST_TIMEOUT` | `20s` | 单次 MCP 请求超时。要明显小于编排器单步 60 秒预算，工具卡住才来得及降级 |
+| `MCP_RETRY_INTERVAL` | `30s` | 后台重连间隔。连不上只影响天气类问题（回退到检索），不影响其他问答 |
 
 `app.jwt.access-ttl=PT30M`、`refresh-ttl=P7D` 写在 `application.yml` 里，没有做成环境变量。
 
@@ -459,6 +463,27 @@ ping      {}                             每 15s
 
 正在回答时拒绝删除是必须的：工作线程握着会话 id，行一旦消失，它随后写消息、写步骤、标失败全都撞外键。
 
+### 实时工具（MCP）分支
+
+编排开始前还有一条短路：**工具可用 + 问题命中实时数据语义**时，直接让模型调用外部 MCP 工具作答。
+
+| 环节 | 位置 | 说明 |
+|---|---|---|
+| 连接 | `chat/mcp/McpToolRegistry` | 启动后在后台线程连 SSE 端点，失败每 `MCP_RETRY_INTERVAL` 重试；对话线程只读内存里的工具列表，永不阻塞 |
+| 判定 | `ToolRouting.wantsLiveData` | 关键词表刻意保守：收「气温/下雨/预报」，**不收**「温度/湿度」（碳核算与设备文档里同样常见） |
+| 作答 | `ChatModelGateway.hasLiveTools/chatWithTools` | 生产实现在 `SpringAiChatModelGateway`：把工具交给 Spring AI `ChatClient`，由它完成「模型要求调用 → 执行 → 带结果再问」 |
+| 降级 | `ChatOrchestrator` | 工具超时或失败只打 WARN，继续走 PLAN/RETRIEVE/REFLECT/ANSWER，用户拿到的是接入前的行为 |
+
+约束：
+
+- 工具回答**没有引用**（`citations=[]`，步骤载荷 `{"citations":0,"tools":true}`），前端照旧渲染。
+- **步骤事件在工具返回后才发**：失败时事件流里不会留下半截 ANSWER。
+- 工具名保持服务端原名。Spring AI 的 `SyncMcpToolCallback` 会加 `JavaSDKMCPClient_` 前缀，这里用自写的
+  `McpToolCallback` 替代，避免前缀污染模型上下文与推理摘要。
+- 只有**工具执行**失败才断开 MCP 连接；模型侧故障（401、不支持 function calling）与 MCP 健康无关。
+
+---
+
 ### 三条不变式
 
 1. **推理步骤是主数据**：写库的代码路径不得依赖客户端在线。用户中途关页面，答案与步骤照样落库，
@@ -515,7 +540,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/advisory-server/pom.xml test` → **253 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/advisory-server/pom.xml test` → **269 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 （仓库根 `backend/pom.xml` 是聚合工程，`mvn -f backend/pom.xml test` 会把 `mcp-server` 下的 MCP 服务一起跑。）
 
 | 类型 | 位置 | 做法 |

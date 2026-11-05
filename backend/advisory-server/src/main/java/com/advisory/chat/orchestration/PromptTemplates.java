@@ -110,6 +110,27 @@ public final class PromptTemplates {
                 """.formatted(question, numberedEvidence);
     }
 
+    /**
+     * 走实时工具（MCP）作答时的系统提示词。
+     *
+     * <p>与 {@link #answerSystem(String)} 的区别是「依据」换了：那里只能引用编号片段，这里只能依据工具
+     * 返回。两条底线一致——不许编造。刻意不拼 Agent 的人设提示词：工具分支回答的是「北京天气怎么样」
+     * 这类事实问题，行业人设只会让模型往业务话术上偏。</p>
+     *
+     * @param agentName 当前 Agent 名称，可为空
+     */
+    public static String toolSystem(String agentName) {
+        String name = agentName == null || agentName.isBlank() ? "知识库助手" : agentName.trim();
+        return """
+                你是「%s」，可以调用外部工具获取实时数据（例如天气）。
+                要求：
+                - 需要实时数据时先调用工具，再基于工具返回的内容作答；
+                - 只能使用工具返回的事实，禁止凭记忆编造具体数值、日期或天气现象；
+                - 工具明确表示查不到或调用失败时，如实说明「暂时查不到实时数据」，不要猜测；
+                - 输出 Markdown 正文，简洁清楚，不要标注 [n] 引用编号，不要输出参考文献列表。
+                """.formatted(name);
+    }
+
     /** 把证据渲染成 {@code [n] 文档名（节点：…）} 加片段正文的形式，不限制长度。 */
     public static String numberedEvidence(List<RetrievedChunk> chunks) {
         return numberedEvidence(chunks, Integer.MAX_VALUE);
