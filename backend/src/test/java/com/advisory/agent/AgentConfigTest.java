@@ -384,13 +384,12 @@ class AgentConfigTest extends IntegrationTestBase {
         assertCreateRejected(noModelKb, Map.of());
     }
 
-    // ------------------------------------------------------------------ 5. 删除保护
+    // ------------------------------------------------------------------ 5. 删除（必须先下线，软删保留历史）
 
     @Test
-    void deleteIsBlockedWhileConversationsExist() throws Exception {
+    void deleteRequiresOfflineAndKeepsConversationHistory() throws Exception {
         long kbId = createKb(firstEmbeddingModelId);
         long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
-
         long userId = jdbc.queryForObject(
                 "SELECT id FROM users WHERE username LIKE 'agent10-user-%' LIMIT 1", Long.class);
         long conversationId = jdbc.queryForObject("""
@@ -404,16 +403,95 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.code").value(40900));
         assertNotNullAgent(agentId);
 
-        jdbc.update("DELETE FROM conversations WHERE id = ?", conversationId);
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
         mockMvc.perform(delete("/api/agents/" + agentId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
-        assertEquals(0, jdbc.queryForObject(
-                "SELECT count(*) FROM agents WHERE id = ?", Integer.class, agentId));
-        assertEquals(0, jdbc.queryForObject(
-                "SELECT count(*) FROM agent_versions WHERE agent_id = ?", Integer.class, agentId),
-                "versions cascade with the agent");
+
+        mockMvc.perform(get("/api/agents/" + agentId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400));
+
+        String agentList = mockMvc.perform(get("/api/agents")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> agentIds = JsonPath.read(agentList, "$.data.content[*].id");
+        assertFalse(agentIds.contains((int) agentId), "软删后列表不再返回");
+
+        String conversationList = mockMvc.perform(get("/api/conversations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> conversationIds = JsonPath.read(conversationList, "$.data.content[*].id");
+        assertTrue(conversationIds.contains((int) conversationId),
+                "历史会话仍出现在会话列表，JOIN agents 不能过滤 deleted_at");
+
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM agents WHERE id = ?", Integer.class, agentId),
+                "软删保留 agents 行");
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM agents WHERE id = ? AND deleted_at IS NOT NULL",
+                Integer.class, agentId));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM conversations WHERE id = ?", Integer.class, conversationId),
+                "历史会话不能被级联删除");
+        assertEquals("prompt", agentService.resolveSnapshot(agentId, 1).systemPrompt(),
+                "已删除 Agent 的历史会话仍能重放");
+    }
+
+    @Test
+    void deletedAgentCannotStartConversationOrTestRun() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/agents/" + agentId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/conversations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"agentId\":" + agentId + ",\"title\":\"deleted\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400));
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/test")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"还在吗\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400));
+    }
+
+    @Test
+    void knowledgeBaseReferencedOnlyByDeletedAgentCanBeDeleted() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long agentId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        mockMvc.perform(delete("/api/knowledge-bases/" + kbId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40903));
+
+        mockMvc.perform(post("/api/agents/" + agentId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/agents/" + agentId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/knowledge-bases/" + kbId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
     }
 
     // ------------------------------------------------------------------ 6. 重名

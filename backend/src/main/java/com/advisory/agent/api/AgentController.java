@@ -81,7 +81,7 @@ public class AgentController {
         return ApiResponse.ok(service.offline(id));
     }
 
-    /** 删除 Agent；仍有关联会话时返回 409，需先归档。 */
+    /** 删除 Agent：在线时 409（需先下线）；已下线时软删，历史会话与版本快照保留。 */
     @DeleteMapping("/api/agents/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(@PathVariable Long id) {

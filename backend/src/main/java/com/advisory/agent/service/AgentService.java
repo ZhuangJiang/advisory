@@ -103,7 +103,10 @@ public class AgentService {
      */
     @Transactional(readOnly = true)
     public AgentSnapshot resolveSnapshot(Long agentId, int version) {
-        requireAgent(agentId);
+        // 历史会话可能指向已软删的 Agent，因此这里刻意不过滤 deleted_at；
+        // 管理操作请走 requireAgent（只认未删除行）。
+        agents.findById(agentId)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
         return versions.findSnapshot(agentId, version)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND,
                         "Agent 版本 " + version + " 不存在"));
@@ -219,15 +222,15 @@ public class AgentService {
         return setEnabled(id, false);
     }
 
-    /** 删除 Agent；存在关联会话时返回 409。 */
+    /** 只有已下线的 Agent 才能删除；删除是软删，历史会话与版本快照保留。 */
     @Transactional
     public void delete(Long id) {
-        requireAgent(id);
-        if (agents.countConversations(id) > 0) {
-            throw new AppException(ErrorCode.CONFLICT,
-                    "该 Agent 下已有会话，无法删除；请先归档会话");
+        Agent current = agents.findActiveByIdForUpdate(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
+        if (current.enabled()) {
+            throw new AppException(ErrorCode.CONFLICT, "请先下线再删除");
         }
-        agents.deleteById(id); // 版本行随级联清理
+        agents.softDelete(id);
     }
 
     // ------------------------------------------------------------------ 校验

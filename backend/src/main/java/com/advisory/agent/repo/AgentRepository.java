@@ -87,17 +87,6 @@ public class AgentRepository {
                 .findFirst();
     }
 
-    /**
-     * 在事务期间锁住该行。所有版本号递增都必须经过这次读取，好让并发的两次 PATCH 串行化，
-     * 而不是双双写入 {@code current_version + 1} 导致丢失一个版本
-     * （否则 (agent_id, version) 唯一索引会直接让请求失败）。
-     */
-    public Optional<Agent> findByIdForUpdate(long id) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM agents WHERE id = ? FOR UPDATE", rowMapper, id)
-                .stream()
-                .findFirst();
-    }
-
     /** 分页读取未删除的 Agent，按主键升序。 */
     public List<Agent> findPage(int limit, int offset) {
         return jdbc.query("SELECT " + COLUMNS
@@ -191,16 +180,10 @@ public class AgentRepository {
                 + " WHERE id = ? AND deleted_at IS NULL", enabled, id);
     }
 
-    /** 删除 Agent，版本行随级联清理。 */
-    public void deleteById(long id) {
-        jdbc.update("DELETE FROM agents WHERE id = ?", id);
-    }
-
-    /** 统计关联会话数，用于拒绝删除。 */
-    public long countConversations(long agentId) {
-        Long count = jdbc.queryForObject(
-                "SELECT count(*) FROM conversations WHERE agent_id = ?", Long.class, agentId);
-        return count == null ? 0 : count;
+    /** 软删：只写 deleted_at，保留会话、消息、版本与历史配置。 */
+    public void softDelete(long id) {
+        jdbc.update("UPDATE agents SET deleted_at = now()"
+                + " WHERE id = ? AND deleted_at IS NULL", id);
     }
 
     /**

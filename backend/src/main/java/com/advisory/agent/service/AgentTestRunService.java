@@ -51,7 +51,7 @@ public class AgentTestRunService {
         if (version != null && version < 1) {
             throw new AppException(ErrorCode.VALIDATION_FAILED, "版本号必须是正整数");
         }
-        Agent agent = agents.findById(agentId)
+        Agent agent = agents.findActiveById(agentId)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
         int resolvedVersion = version == null ? agent.currentVersion() : version;
         AgentSnapshot snapshot = agentService.resolveSnapshot(agentId, resolvedVersion);

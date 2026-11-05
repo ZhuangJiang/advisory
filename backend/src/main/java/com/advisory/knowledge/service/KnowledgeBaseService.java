@@ -141,7 +141,8 @@ public class KnowledgeBaseService {
                 SELECT count(*)
                 FROM agents a
                 CROSS JOIN LATERAL jsonb_array_elements_text(a.kb_ids) AS e(elem)
-                WHERE e.elem ~ '^-?[0-9]+$' AND e.elem::bigint = ?
+                WHERE a.deleted_at IS NULL
+                  AND e.elem ~ '^-?[0-9]+$' AND e.elem::bigint = ?
                 """, Long.class, id);
         if (references != null && references > 0) {
             throw new AppException(ErrorCode.KB_IN_USE, "知识库已被某个 Agent 引用");

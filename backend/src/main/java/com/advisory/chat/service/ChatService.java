@@ -88,8 +88,9 @@ public class ChatService {
     /**
      * 新建会话，并把它钉在 Agent 的<em>当前</em>版本上。
      *
-     * <p>已停用的 Agent 不能用于新建会话，但停用之前就已存在的会话仍会解析自己锁定的快照继续可用——
-     * 停用影响的是「还能不能开始新对话」，而不是「旧对话是否作废」。</p>
+     * <p>已下线的 Agent 不能用于新建会话，但下线之前就已存在的会话仍会解析自己锁定的快照继续可用——
+     * 下线影响的是「还能不能开始新对话」，而不是「旧对话是否作废」。已软删的 Agent 同样不能新建会话，
+     * 但历史会话仍可打开。</p>
      *
      * @param agentId 目标 Agent
      * @param userId  发起者
@@ -100,10 +101,10 @@ public class ChatService {
         if (agentId == null) {
             throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定 Agent");
         }
-        Agent agent = agents.findById(agentId)
+        Agent agent = agents.findActiveById(agentId)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
         if (!agent.enabled()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "该 Agent 已被禁用");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "该 Agent 已下线");
         }
         long id = conversations.insert(agent.id(), agent.currentVersion(), userId,
                 normalizeTitle(title));
