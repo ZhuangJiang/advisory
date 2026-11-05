@@ -32,10 +32,10 @@ import java.util.List;
  * 以及正在重建索引的。</p>
  *
  * <p>{@link #reindex(Long)} 按裁决 R6 执行：先用 CAS 把 {@code reindex_status} 置为 {@code REINDEXING}，
- * 再把后台任务交给 worker 专用的单线程执行器；任务把所有非 {@code DELETED} 文档重置为 {@code PENDING}
- * 并同步跑完入库流水线，最后在 {@code finally} 里把状态收敛为 {@code READY}/{@code FAILED}，
- * 保证知识库绝不会永远卡在 {@code REINDEXING}。任务计入 worker 的公共空闲计数器，测试因此可以
- * {@code awaitIdle} 等整个重建结束。</p>
+ * 再把后台任务交给 worker 专用的重建线程；任务把所有非 {@code DELETED} 文档重置为 {@code PENDING} 后，
+ * 逐篇投进 {@link DocumentChunkQueue 裁切队列}（与用户上传共用同一条串行队列），等整批结束再把状态收敛为
+ * {@code READY}/{@code FAILED}，保证知识库绝不会永远卡在 {@code REINDEXING}。重建计入 worker 的公共空闲
+ * 计数器，测试因此可以 {@code awaitIdle} 等整个重建结束。</p>
  */
 @Service
 public class KnowledgeBaseService {
@@ -269,8 +269,12 @@ public class KnowledgeBaseService {
 
     /**
      * 重建的实际执行体，运行在专用重建线程上：把该知识库所有非 DELETED 文档重置为 PENDING 并清空
-     * {@code error_msg}，逐个同步跑完同一条入库流水线，最后收敛 {@code reindex_status}——没有文档失败则
-     * READY，否则 FAILED；零文档同样收敛为 READY。
+     * {@code error_msg}，按 id 顺序逐篇投进裁切队列，等整批跑完后收敛 {@code reindex_status}——没有文档
+     * 失败则 READY，否则 FAILED；零文档同样收敛为 READY。
+     *
+     * <p>重建不走自己的线程池去并行跑流水线，而是复用用户上传用的同一条裁切队列：一次重建可能有几百篇
+     * 文档，若它另开并发，两个入口会同时向 embedding 服务打请求，正是要避免的拥挤。代价是重建会排在
+     * 已经在队列里的文档之后，这是有意的——先来先处理。</p>
      *
      * @param kbId 知识库主键
      */
@@ -283,9 +287,7 @@ public class KnowledgeBaseService {
             List<Long> ids = jdbc.queryForList(
                     "SELECT id FROM documents WHERE kb_id = ? AND status <> 'DELETED' ORDER BY id",
                     Long.class, kbId);
-            for (Long id : ids) {
-                worker.runPipeline(id);
-            }
+            worker.ingestBatch(ids);
         } catch (RuntimeException e) {
             // 流水线是逐文档失败的；无论这个线程上冒出什么异常，都不能阻止下面 finally 里的状态收尾。
             log.error("Reindex of knowledge base {} failed", kbId, e);

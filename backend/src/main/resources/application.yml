@@ -39,5 +39,15 @@ app:
   bootstrap-admin:
     username: ${ADMIN_USERNAME:admin}
     password: ${ADMIN_PASSWORD:admin}
+  ingest:
+    # 裁切队列容量：单线程先进先出，同一时刻只处理一个文档。排队数超过容量时新的提交会被拒绝，
+    # 文档直接置为 FAILED 并提示「队列已满，请稍后重试」，可以手动重试——不会无声无息地卡在排队中。
+    queue-capacity: ${INGEST_QUEUE_CAPACITY:500}
   embedding:
     dimension: 1024
+  chat:
+    # Ollama 请求里的 num_ctx，同时也是编排器裁剪证据时用的窗口——两处必须一致。
+    # Ollama 服务端默认只有 4096（OLLAMA_CONTEXT_LENGTH），跨轮累积的检索证据很容易把它撑爆，
+    # 报错形如 `request (5448 tokens) exceeds the available context size (4096 tokens)`。
+    # 显存紧张时调小，换用大窗口模型时调大；不配则用 8192。
+    context-window-tokens: ${CHAT_CONTEXT_WINDOW_TOKENS:8192}

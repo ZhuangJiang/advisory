@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,6 +27,8 @@ import java.io.InputStream;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -44,10 +47,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * 会重新走一遍 {@code PARSING} 的 CAS：每个阶段都是幂等的（解析产物被覆盖写、片段集合用 {@code replaceAll}），
  * 因此从头重放永远安全。</p>
  *
+ * <p>所有文档级任务（入库、重新裁切、删除清理）都不在线程池里并发跑，而是排进
+ * {@link DocumentChunkQueue}：单线程、先进先出、同一时刻只处理一个文档。上传几十个文件时它们会按提交
+ * 顺序依次解析与向量化，而不是同时向 embedding 服务打出几十条请求。队列满时提交会被拒绝，文档直接置
+ * {@code FAILED} 并给出可重试的文案，绝不无声丢弃。</p>
+ *
  * <p>{@link #awaitIdle(Duration)} 用「计数器 + 条件变量」跟踪已提交的任务，测试因此可以等真实完成而不用睡眠。
  * 所有让计数加一的路径都在 {@code finally} 里减一，包括提交被拒绝的情况，计数器不会泄漏。
- * 知识库重建任务也挂在同一个计数器上（跑在专用的单线程执行器里，见 {@link #submitReindexTask(Runnable)}），
- * 所以重建可以和普通入库一样被等待。</p>
+ * 知识库重建也挂在同一个计数器上（见 {@link #submitReindexTask(Runnable)}）：它把整库文档逐篇投进同一条
+ * 裁切队列再等全部结束，所以重建既不会和普通入库抢 embedding，也能被 {@code awaitIdle} 等待。</p>
  */
 @Component
 public class DocumentIngestWorker implements ApplicationRunner {
@@ -57,6 +65,9 @@ public class DocumentIngestWorker implements ApplicationRunner {
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
     private static final String INTERMEDIATE_STATUSES = "('PARSING', 'CHUNKING', 'EMBEDDING')";
 
+    /** 队列满时的文档错误文案：用户能据此知道「不是文件坏了，是排不进去」，并且可以点重试。 */
+    static final String QUEUE_FULL_MESSAGE = "裁切队列已满，请稍后重试";
+
     private final JdbcTemplate jdbc;
     private final StorageService storage;
     private final DocumentParser parser;
@@ -64,20 +75,32 @@ public class DocumentIngestWorker implements ApplicationRunner {
     private final ChunkWriter chunkWriter;
     private final EmbeddingGateway gateway;
     private final ObjectMapper objectMapper;
-    private final ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    /** 裁切队列：单线程 FIFO，所有文档级任务都在这里串行执行。 */
+    private final DocumentChunkQueue chunkQueue;
     private final ThreadPoolTaskExecutor reindexExecutor = new ThreadPoolTaskExecutor();
 
     private final ReentrantLock idleLock = new ReentrantLock();
     private final Condition idleCondition = idleLock.newCondition();
     private int pendingTasks;
 
+    /**
+     * @param jdbc           JDBC 模板
+     * @param storage        对象存储，读写原始文件与解析产物
+     * @param parser         文档解析器
+     * @param chunker        结构化切片器
+     * @param chunkWriter    片段落库
+     * @param gateway        向量化网关
+     * @param objectMapper   读取 {@code chunk_config}
+     * @param queueCapacity  裁切队列容量，来自 {@code app.ingest.queue-capacity}
+     */
     public DocumentIngestWorker(JdbcTemplate jdbc,
                                 StorageService storage,
                                 DocumentParser parser,
                                 StructureAwareChunker chunker,
                                 ChunkWriter chunkWriter,
                                 EmbeddingGateway gateway,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                @Value("${app.ingest.queue-capacity:500}") int queueCapacity) {
         this.jdbc = jdbc;
         this.storage = storage;
         this.parser = parser;
@@ -85,11 +108,7 @@ public class DocumentIngestWorker implements ApplicationRunner {
         this.chunkWriter = chunkWriter;
         this.gateway = gateway;
         this.objectMapper = objectMapper;
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(100);
-        executor.setThreadNamePrefix("doc-ingest-");
-        executor.initialize();
+        this.chunkQueue = new DocumentChunkQueue(queueCapacity);
         // 重建用单线程串行执行整库重建，排队本身即设计意图（裁决 R6）。
         reindexExecutor.setCorePoolSize(1);
         reindexExecutor.setMaxPoolSize(1);
@@ -160,29 +179,91 @@ public class DocumentIngestWorker implements ApplicationRunner {
         return ids;
     }
 
-    /** 提交一个文档入库任务。同一个 id 允许重复入队，最终由状态 CAS 决定谁真正执行。 */
+    /** 提交一个文档入库任务（需要重新解析）。同一个 id 允许重复入队，最终由状态 CAS 决定谁真正执行。 */
     public void enqueue(Long documentId) {
+        enqueue(documentId, IngestMode.FULL);
+    }
+
+    /**
+     * 提交一次「重新裁切」：复用已落库的 {@code parsed.md}，跳过解析，直接用当前的切片配置重新切片与
+     * 向量化。解析产物缺失时流水线会自动退回完整流程，因此调用方不必先检查。
+     *
+     * @param documentId 文档主键
+     */
+    public void enqueueRechunk(Long documentId) {
+        enqueue(documentId, IngestMode.RECHUNK);
+    }
+
+    private void enqueue(Long documentId, IngestMode mode) {
         if (documentId == null) {
             return;
         }
-        submit(() -> runPipeline(documentId), "ingest document " + documentId);
+        boolean accepted = submitToQueue(documentId, () -> runPipeline(documentId, mode));
+        if (!accepted) {
+            // 队列满时不能让文档悬在 PENDING：那会一直显示「排队中」直到下次重启。
+            fail(documentId, QUEUE_FULL_MESSAGE);
+        }
+    }
+
+    /**
+     * 排队位次，供界面显示「排队中（第 N 位）」。
+     *
+     * @param documentId 文档主键
+     * @return 从 1 开始的位次；正在执行或根本不在队列里返回 {@code 0}
+     */
+    public int queuePosition(Long documentId) {
+        return documentId == null ? 0 : chunkQueue.positionOf(documentId);
+    }
+
+    /**
+     * 把一批文档按给定顺序投进裁切队列，并阻塞到全部执行完毕。
+     *
+     * <p>供知识库重建使用（裁决 R6）：重建不再是「另开一条线程池并行跑」，而是把整库文档排进同一条
+     * 裁切队列，与用户新上传的文档共用同一个执行顺序，因此重建期间不会有两套流水线同时打 embedding。
+     * 计数在每篇文档结束时递减，提交被拒时立即递减并在文档上写明原因，所以等待不会挂住。</p>
+     *
+     * @param documentIds 文档主键，按期望的执行顺序排列
+     */
+    public void ingestBatch(List<Long> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            return;
+        }
+        CountDownLatch done = new CountDownLatch(documentIds.size());
+        for (Long documentId : documentIds) {
+            boolean accepted = submitToQueue(documentId, () -> {
+                try {
+                    runPipeline(documentId, IngestMode.FULL);
+                } finally {
+                    done.countDown();
+                }
+            });
+            if (!accepted) {
+                fail(documentId, QUEUE_FULL_MESSAGE);
+                done.countDown();
+            }
+        }
+        try {
+            done.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("等待裁切队列清空时被中断，剩余 {} 篇文档仍在队列中", done.getCount());
+        }
     }
 
     /**
      * 软删除后的异步清理：删掉片段、原始对象与解析产物（仅当 {@code parsed_key} 已写入时）。
      *
      * <p>在任务真正执行时会重新校验一次状态，删片段的语句内部又再校验一次，因此一个已不再是
-     * {@code DELETED} 的文档，绝不会被这次清理误删掉正在入库的片段。</p>
+     * {@code DELETED} 的文档，绝不会被这次清理误删掉正在入库的片段。清理同样排进裁切队列：它与同一文档
+     * 的入库任务因此永远一先一后，不会出现「清理删完片段、流水线又把片段写回来」的交错。</p>
      *
      * @param documentId 文档主键
-     * @param objectKey  原始对象键
-     * @param parsedKey  解析产物键，可为 {@code null}
      */
     public void enqueueCleanup(Long documentId) {
         if (documentId == null) {
             return;
         }
-        submit(() -> {
+        boolean accepted = submitToQueue(documentId, () -> {
             List<Map<String, Object>> rows = jdbc.queryForList(
                     "SELECT status, kb_id, object_key, parsed_key FROM documents WHERE id = ?", documentId);
             if (rows.isEmpty()) {
@@ -201,7 +282,11 @@ public class DocumentIngestWorker implements ApplicationRunner {
             long kbId = ((Number) row.get("kb_id")).longValue();
             removeQuietly(documentId, kbId, (String) row.get("object_key"));
             removeQuietly(documentId, kbId, (String) row.get("parsed_key"));
-        }, "clean up document " + documentId);
+        });
+        if (!accepted) {
+            // 清理失败只是留下垃圾对象，不影响数据正确性：记一条警告，等下次删库或人工清理。
+            log.warn("Document {} cleanup could not be queued; its objects stay in storage", documentId);
+        }
     }
 
     /**
@@ -301,12 +386,17 @@ public class DocumentIngestWorker implements ApplicationRunner {
      * 同步跑完一个文档的流水线，不论它当前处于哪个非终态：正常的 {@code PENDING}，或来自启动恢复、
      * 重建中途重启的中间状态——后者会重新经过 {@code PARSING} 的 CAS 并从头重放（每个阶段都幂等）。
      *
-     * <p>包级可见，是为了让 {@code KnowledgeBaseService.reindex} 能在重建线程上复用同一条流水线（裁决 R6），
+     * <p>{@link IngestMode#RECHUNK} 时先尝试复用已落库的 {@code parsed.md}：命中就从 {@code CHUNKING}
+     * 开始，省掉一次 Tika 解析；解析产物缺失（老数据、被清理过、对象读不出来）则自动退回
+     * {@link IngestMode#FULL}，用户无事发生，只是慢一点。</p>
+     *
+     * <p>包级可见，是为了让 {@code KnowledgeBaseService.reindex} 能复用同一条流水线（裁决 R6），
      * 否则重建就得再写一份等价逻辑，两份迟早不一致。</p>
      *
      * @param documentId 文档主键
+     * @param mode       完整入库还是只重新裁切
      */
-    void runPipeline(long documentId) {
+    void runPipeline(long documentId, IngestMode mode) {
         DocumentStatus current;
         try {
             current = statusOf(documentId);
@@ -326,28 +416,36 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
 
         try {
-            // PENDING 是正常路径；中间状态来自启动恢复或重跑，既然每个阶段都幂等，就让它们重新走一遍解析。
-            if (!transition(documentId, current, DocumentStatus.PARSING, null)) {
-                return;
-            }
-
-            // ------------------------------------------------ 解析
             IngestRow row = loadIngestRow(documentId);
-            if (storage.stat(row.kbId(), row.objectKey()).isEmpty()) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "无法解析该文件：存储中找不到已上传的文件对象 " + row.objectKey());
-            }
-            ParsedDocument parsed;
-            try (InputStream in = storage.getObject(row.kbId(), row.objectKey())) {
-                parsed = parser.parse(in, row.filename());
-            }
-            // parsed_key 每次运行都覆盖写：它是恢复与排查问题时的产物（§145/§154）。
-            String parsedKey = parsedKeyFor(row.objectKey());
-            String markdown = parsed.markdown();
-            storage.putText(row.kbId(), parsedKey, markdown);
-            jdbc.update("UPDATE documents SET parsed_key = ? WHERE id = ?", parsedKey, documentId);
-            if (!transition(documentId, DocumentStatus.PARSING, DocumentStatus.CHUNKING, null)) {
-                return;
+
+            // ------------------------------------------------ 解析（重新裁切时尽量跳过）
+            ParsedDocument parsed = mode == IngestMode.RECHUNK ? reuseParsed(row) : null;
+            if (parsed != null) {
+                if (!transition(documentId, current, DocumentStatus.CHUNKING, null)) {
+                    return;
+                }
+            } else {
+                if (mode == IngestMode.RECHUNK) {
+                    log.info("Document {} has no reusable parsed text; falling back to a full parse", documentId);
+                }
+                // PENDING 是正常路径；中间状态来自启动恢复或重跑，既然每个阶段都幂等，就让它们重新走一遍解析。
+                if (!transition(documentId, current, DocumentStatus.PARSING, null)) {
+                    return;
+                }
+                if (storage.stat(row.kbId(), row.objectKey()).isEmpty()) {
+                    throw new AppException(ErrorCode.VALIDATION_FAILED,
+                            "无法解析该文件：存储中找不到已上传的文件对象 " + row.objectKey());
+                }
+                try (InputStream in = storage.getObject(row.kbId(), row.objectKey())) {
+                    parsed = parser.parse(in, row.filename());
+                }
+                // parsed_key 每次运行都覆盖写：它是恢复与排查问题时的产物（§145/§154）。
+                String parsedKey = parsedKeyFor(row.objectKey());
+                storage.putText(row.kbId(), parsedKey, parsed.markdown());
+                jdbc.update("UPDATE documents SET parsed_key = ? WHERE id = ?", parsedKey, documentId);
+                if (!transition(documentId, DocumentStatus.PARSING, DocumentStatus.CHUNKING, null)) {
+                    return;
+                }
             }
 
             // ------------------------------------------------ 切片
@@ -385,7 +483,7 @@ public class DocumentIngestWorker implements ApplicationRunner {
 
     private IngestRow loadIngestRow(long documentId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT kb_id, node_id, filename, object_key FROM documents WHERE id = ?
+                SELECT kb_id, node_id, filename, object_key, parsed_key FROM documents WHERE id = ?
                 """, documentId);
         if (rows.isEmpty()) {
             // 与物理删除撞上了：当作文档已消失处理即可。
@@ -396,7 +494,29 @@ public class DocumentIngestWorker implements ApplicationRunner {
                 ((Number) row.get("kb_id")).longValue(),
                 row.get("node_id") == null ? null : ((Number) row.get("node_id")).longValue(),
                 (String) row.get("filename"),
-                (String) row.get("object_key"));
+                (String) row.get("object_key"),
+                (String) row.get("parsed_key"));
+    }
+
+    /**
+     * 复用上一次解析留下的 Markdown，重建章节结构但不重新解析原始文件。
+     *
+     * <p>章节由 {@link MarkdownStructure#sections(String)} 从同一份 Markdown 重新推导，所以切片结果与
+     * 完整解析路径完全一致——切片器只消费 {@code markdown} 与 {@code sections}，而两者都由这段文本决定。</p>
+     *
+     * @param row 文档行
+     * @return 可复用的解析结果；没有产物或读不出来时返回 {@code null}，由调用方退回完整解析
+     */
+    private ParsedDocument reuseParsed(IngestRow row) {
+        if (row.parsedKey() == null || row.parsedKey().isBlank()) {
+            return null;
+        }
+        Optional<String> stored = storage.readText(row.kbId(), row.parsedKey());
+        if (stored.isEmpty() || stored.get().isBlank()) {
+            return null;
+        }
+        String markdown = stored.get();
+        return ParsedDocument.ofMarkdown(markdown);
     }
 
     /**
@@ -475,30 +595,30 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
     }
 
-    private void submit(Runnable task, String description) {
+    /**
+     * 把任务排进裁切队列，并维护 {@link #awaitIdle(Duration)} 的计数器。
+     *
+     * @param documentId 文档主键，用于排队位次
+     * @param task       任务体
+     * @return 已入队返回 {@code true}；队列满返回 {@code false}，此时计数器已经回退，调用方需自行处理文档状态
+     */
+    private boolean submitToQueue(long documentId, Runnable task) {
         taskSubmitted();
-        boolean handedOff = false;
-        try {
-            executor.execute(() -> {
-                try {
-                    task.run();
-                } catch (Throwable t) {
-                    // 后台任务绝不能把线程乃至整个 JVM 一起带走。
-                    log.error("Unhandled failure while trying to {}", description, t);
-                } finally {
-                    taskCompleted();
-                }
-            });
-            handedOff = true;
-        } catch (RuntimeException e) {
-            log.error("Could not hand off task to {}", description, e);
-        } finally {
-            // execute() 抛出的任何异常（拒绝、已关闭等）都必须释放计数，
-            // 否则后续每一次 awaitIdle() 都会白白超时。
-            if (!handedOff) {
+        boolean handedOff = chunkQueue.submit(documentId, () -> {
+            try {
+                task.run();
+            } catch (Throwable t) {
+                // 后台任务绝不能把线程乃至整个 JVM 一起带走。
+                log.error("Unhandled failure while processing document {}", documentId, t);
+            } finally {
                 taskCompleted();
             }
+        });
+        if (!handedOff) {
+            // 队列拒绝也必须释放计数，否则后续每一次 awaitIdle() 都会白白超时。
+            taskCompleted();
         }
+        return handedOff;
     }
 
     private void taskSubmitted() {
@@ -533,12 +653,20 @@ public class DocumentIngestWorker implements ApplicationRunner {
                 : errorMsg.substring(0, MAX_ERROR_MESSAGE_LENGTH);
     }
 
-    private record IngestRow(long kbId, Long nodeId, String filename, String objectKey) {
+    private record IngestRow(long kbId, Long nodeId, String filename, String objectKey, String parsedKey) {
+    }
+
+    /** 入库流水线的两种入口：完整解析，或只重新裁切。 */
+    enum IngestMode {
+        /** 解析、切片、向量化全走一遍（上传、重试、重建索引）。 */
+        FULL,
+        /** 优先复用已落库的解析产物，只重新切片与向量化（单篇/批量重新裁切）。 */
+        RECHUNK
     }
 
     @PreDestroy
     void shutdown() {
         reindexExecutor.shutdown();
-        executor.shutdown();
+        chunkQueue.shutdown();
     }
 }

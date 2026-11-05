@@ -8,6 +8,7 @@ import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.api.dto.DocumentResponse;
 import com.advisory.knowledge.api.dto.PresignRequest;
 import com.advisory.knowledge.api.dto.PresignResponse;
+import com.advisory.knowledge.api.dto.RechunkResponse;
 import com.advisory.knowledge.domain.Document;
 import com.advisory.knowledge.domain.DocumentStatus;
 import com.advisory.knowledge.domain.KbNodeRow;
@@ -26,6 +27,7 @@ import java.net.URLConnection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -80,7 +82,9 @@ public class DocumentService {
             rs.getString("status"),
             rs.getString("error_msg"),
             rs.getTimestamp("created_at").toInstant(),
-            rs.getTimestamp("updated_at").toInstant());
+            rs.getTimestamp("updated_at").toInstant(),
+            // 排队位次不在数据库里：由 withQueuePosition 在需要时补上。
+            null);
 
     private final DocumentRepository documents;
     private final KnowledgeBaseRepository knowledgeBases;
@@ -187,11 +191,30 @@ public class DocumentService {
 
     /** 读取文档；不存在或已软删返回 404。 */
     public DocumentResponse get(Long documentId) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM documents WHERE id = ? AND status <> 'DELETED'",
+        DocumentResponse row = jdbc.query(
+                        "SELECT " + COLUMNS + " FROM documents WHERE id = ? AND status <> 'DELETED'",
                         ROW_MAPPER, documentId)
                 .stream()
                 .findFirst()
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在"));
+        return withQueuePosition(row);
+    }
+
+    /**
+     * 为 {@code PENDING} 的文档补上裁切队列里的位次，其余状态原样返回。
+     *
+     * <p>位次来自进程内的队列，而不是数据库排序：队列的执行顺序才是用户真正在等的顺序，
+     * 用 SQL 重算一遍只会在并发提交时给出一个看着合理、实际对不上的数字。</p>
+     *
+     * @param row 文档响应
+     * @return 可能带位次的文档响应
+     */
+    private DocumentResponse withQueuePosition(DocumentResponse row) {
+        if (!DocumentStatus.PENDING.name().equals(row.status())) {
+            return row;
+        }
+        int position = worker.queuePosition(row.id());
+        return position > 0 ? row.withQueuePosition(position) : row;
     }
 
     /** 分页列出知识库下的文档。 */
@@ -219,7 +242,7 @@ public class DocumentService {
         List<DocumentResponse> items = jdbc.query(
                 "SELECT " + COLUMNS + " FROM documents" + where
                         + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                ROW_MAPPER, args.toArray());
+                ROW_MAPPER, args.toArray()).stream().map(this::withQueuePosition).toList();
 
         return PageResponse.of(items, pageIndex, pageSize, totalCount);
     }
@@ -276,6 +299,64 @@ public class DocumentService {
         return pending;
     }
 
+    /**
+     * 重新裁切单篇文档：复用已落库的解析产物，按知识库当前的切片配置重新切片并向量化。
+     *
+     * <p>与 {@link #retry} 的区别：重试只服务 {@code FAILED}（走完整解析），而重新裁切服务
+     * {@code READY}/{@code FAILED}——调完切片参数、或者怀疑切片结果不对时，用它比整库重建快得多，
+     * 也不会影响同库其它文档。状态先以 CAS 落到 {@code PENDING} 再入队，与上传、重试共享同一条队列，
+     * 因此同一时刻只有一个文档在跑流水线。</p>
+     *
+     * @param documentId 文档主键
+     * @return 已排队的文档快照（状态为 {@code PENDING}）
+     */
+    public DocumentResponse rechunk(Long documentId) {
+        DocumentResponse current = get(documentId);
+        requireKbNotReindexing(current.kbId(), "知识库正在重建索引，请稍后再重新裁切");
+        DocumentStatus status = DocumentStatus.from(current.status());
+        if (!status.isTerminal()) {
+            // PENDING/PARSING/CHUNKING/EMBEDDING：已经在队列里或正在跑，再排一次只会白跑一遍。
+            throw new AppException(ErrorCode.CONFLICT, "文档正在入库，请等待当前任务结束后再重新裁切");
+        }
+        if (!worker.transition(documentId, status, DocumentStatus.PENDING, null)) {
+            throw new AppException(ErrorCode.CONFLICT, "文档状态已被并发修改，请刷新后重试");
+        }
+        // 在 worker 推进状态之前先把 PENDING 这一刻的快照读出来。
+        DocumentResponse pending = get(documentId);
+        worker.enqueueRechunk(documentId);
+        return pending;
+    }
+
+    /**
+     * 批量重新裁切：逐篇提交，单篇不满足条件只跳过，不影响其它文档。
+     *
+     * <p>去重但保留用户给出的顺序——顺序决定了它们在裁切队列里的先后。</p>
+     *
+     * @param documentIds 文档主键
+     * @return 提交统计与跳过原因
+     */
+    public RechunkResponse rechunkBatch(List<Long> documentIds) {
+        LinkedHashSet<Long> unique = new LinkedHashSet<>();
+        for (Long id : documentIds) {
+            if (id != null) {
+                unique.add(id);
+            }
+        }
+        List<RechunkResponse.Skipped> skipped = new ArrayList<>();
+        int accepted = 0;
+        for (Long id : unique) {
+            try {
+                rechunk(id);
+                accepted++;
+            } catch (AppException e) {
+                // 404/409 在这里都是「这篇跳过了」而不是「整批失败」。
+                skipped.add(new RechunkResponse.Skipped(id, e.getMessage()));
+            }
+        }
+        log.info("Batch rechunk: requested {}, accepted {}, skipped {}", unique.size(), accepted, skipped.size());
+        return new RechunkResponse(unique.size(), accepted, skipped);
+    }
+
     /** 软删除文档，并安排异步清理其对象与片段。 */
     public void delete(Long documentId) {
         int updated = jdbc.update("""
@@ -298,12 +379,22 @@ public class DocumentService {
             throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在");
         }
         // 裁决 R2（Task 7）：知识库重建索引期间拒绝上传；Task 8 的检索也走同一道闸门。
+        requireKbNotReindexing(kbId, "知识库正在重建索引，禁止上传文档");
+        return kbId;
+    }
+
+    /**
+     * 知识库重建期间拒绝一切会改动其片段的写操作。
+     *
+     * @param kbId     知识库主键
+     * @param message 该场景下展示给用户的文案
+     */
+    private void requireKbNotReindexing(Long kbId, String message) {
         String reindexStatus = jdbc.queryForObject(
                 "SELECT reindex_status FROM knowledge_bases WHERE id = ?", String.class, kbId);
         if ("REINDEXING".equals(reindexStatus)) {
-            throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引，禁止上传文档");
+            throw new AppException(ErrorCode.KB_REINDEXING, message);
         }
-        return kbId;
     }
 
     private void validateNodeBelongsToKb(Long kbId, Long nodeId) {

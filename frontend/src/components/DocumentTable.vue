@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type TableInstance } from 'element-plus'
 import {
   deleteDocument,
   describeKnowledgeError,
   listDocuments,
+  rechunkDocument,
+  rechunkDocuments,
   retryDocument,
-  uploadDocument,
+  uploadDocuments,
   type DocumentRow,
   type DocumentStatus
 } from '@/api/knowledge'
@@ -20,6 +22,10 @@ import ChunkDrawer from './ChunkDrawer.vue'
  * single 3s timer is rescheduled only while at least one row is still in a transient state — when
  * everything is settled the component goes quiet. The timer is cleared on unmount and whenever the
  * node or knowledge base changes, so a page change can never be overwritten by a stale response.
+ *
+ * Uploads accept several files at once and go out one by one (see `uploadDocuments`). The backend
+ * chunks documents strictly one at a time, so `queuePosition` on a `PENDING` row tells the operator
+ * where their batch actually is instead of leaving them with an indefinite "排队中".
  */
 const props = defineProps<{
   kbId: number
@@ -28,8 +34,13 @@ const props = defineProps<{
 }>()
 
 const POLL_INTERVAL_MS = 3000
+const MAX_FILE_BYTES = 50 * 1024 * 1024
+/** 一次批量上传的文件数上限：再多就该分批，避免一个请求打满浏览器连接与后端队列。 */
+const MAX_FILES_PER_UPLOAD = 50
 
 const TRANSIENT: DocumentStatus[] = ['PENDING', 'PARSING', 'CHUNKING', 'EMBEDDING']
+/** 这两种状态才有「重新裁切」的意义：中间状态正在处理，删除状态不在列表里。 */
+const RECHUNKABLE: DocumentStatus[] = ['READY', 'FAILED']
 
 const STATUS_TAG: Record<DocumentStatus, 'success' | 'warning' | 'danger' | 'info'> = {
   PENDING: 'info',
@@ -57,15 +68,24 @@ const page = ref(0)
 const size = 10
 const loading = ref(false)
 const uploading = ref(false)
+const uploadProgress = ref<{ done: number; total: number } | null>(null)
+const rechunking = ref(false)
 const error = ref('')
 const drawerVisible = ref(false)
 const drawerDocument = ref<DocumentRow | null>(null)
+const selectedRows = ref<DocumentRow[]>([])
+const tableRef = ref<TableInstance | null>(null)
 
 const fileInput = ref<HTMLInputElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let requestSeq = 0
 
 const transientRows = computed(() => rows.value.filter((row) => TRANSIENT.includes(row.status)))
+const uploadLabel = computed(() =>
+  uploadProgress.value
+    ? `上传中 ${uploadProgress.value.done}/${uploadProgress.value.total}`
+    : '上传文档'
+)
 
 function stopPolling(): void {
   if (pollTimer !== null) {
@@ -121,6 +141,7 @@ watch(
   () => [props.kbId, props.selectedNodeId] as const,
   () => {
     page.value = 0
+    selectedRows.value = []
     stopPolling()
     void load()
   },
@@ -144,27 +165,55 @@ function pickFile(): void {
   fileInput.value?.click()
 }
 
-async function onFileChosen(event: Event): Promise<void> {
+async function onFilesChosen(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
+  const chosen = Array.from(input.files ?? [])
   input.value = ''
-  if (!file || props.selectedNodeId === null) {
+  if (chosen.length === 0 || props.selectedNodeId === null) {
     return
   }
-  if (file.size > 50 * 1024 * 1024) {
-    ElMessage.error('单个文件不能超过 50 MB')
+  if (chosen.length > MAX_FILES_PER_UPLOAD) {
+    ElMessage.error(`一次最多上传 ${MAX_FILES_PER_UPLOAD} 个文件，请分批选择`)
+    return
+  }
+
+  const oversized = chosen.filter((file) => file.size > MAX_FILE_BYTES)
+  const accepted = chosen.filter((file) => file.size <= MAX_FILE_BYTES)
+  if (oversized.length > 0) {
+    ElMessage.warning(`${oversized.length} 个文件超过 50 MB，已跳过：${oversized[0].name}`)
+  }
+  if (accepted.length === 0) {
     return
   }
 
   uploading.value = true
+  uploadProgress.value = { done: 0, total: accepted.length }
   try {
-    await uploadDocument({ kbId: props.kbId, nodeId: props.selectedNodeId, file })
-    ElMessage.success('已提交，正在后台解析')
-    await load(true)
-  } catch (e) {
-    ElMessage.error(describeKnowledgeError(e))
+    const result = await uploadDocuments({
+      kbId: props.kbId,
+      nodeId: props.selectedNodeId,
+      files: accepted,
+      onProgress: (done, total) => {
+        uploadProgress.value = { done, total }
+      }
+    })
+    if (result.uploaded.length > 0) {
+      ElMessage.success(`已提交 ${result.uploaded.length} 个文档，正在按顺序解析`)
+    }
+    if (result.failed.length > 0) {
+      // 只报第一个失败原因：批量场景下逐条弹窗没有意义，详情在列表里能看到失败状态与原因。
+      const first = result.failed[0]
+      ElMessage.error(`${result.failed.length} 个文件上传失败：${first.filename}（${first.message}）`)
+    }
+    // 新文档按创建时间倒序排在首页；留在旧页码上会让人以为上传没生效。
+    if (page.value !== 0) {
+      page.value = 0
+    } else {
+      await load(true)
+    }
   } finally {
     uploading.value = false
+    uploadProgress.value = null
   }
 }
 
@@ -175,6 +224,49 @@ async function retry(row: DocumentRow): Promise<void> {
     await load(true)
   } catch (e) {
     ElMessage.error(describeKnowledgeError(e))
+  }
+}
+
+async function rechunkOne(row: DocumentRow): Promise<void> {
+  try {
+    await rechunkDocument(row.id)
+    ElMessage.success(`「${row.filename}」已重新排队裁切`)
+    await load(true)
+  } catch (e) {
+    ElMessage.error(describeKnowledgeError(e))
+  }
+}
+
+async function rechunkSelected(): Promise<void> {
+  const ids = selectedRows.value.map((row) => row.id)
+  if (ids.length === 0) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认重新裁切选中的 ${ids.length} 篇文档？将按知识库当前的切片配置重新切片并重新向量化。`,
+      '批量重新裁切',
+      { type: 'warning', confirmButtonText: '开始', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  rechunking.value = true
+  try {
+    const result = await rechunkDocuments(ids)
+    if (result.skipped.length > 0) {
+      ElMessage.warning(
+        `已提交 ${result.accepted} 篇，跳过 ${result.skipped.length} 篇：${result.skipped[0].reason}`
+      )
+    } else {
+      ElMessage.success(`已提交 ${result.accepted} 篇重新裁切`)
+    }
+    tableRef.value?.clearSelection()
+    await load(true)
+  } catch (e) {
+    ElMessage.error(describeKnowledgeError(e))
+  } finally {
+    rechunking.value = false
   }
 }
 
@@ -196,6 +288,22 @@ async function remove(row: DocumentRow): Promise<void> {
 function openChunks(row: DocumentRow): void {
   drawerDocument.value = row
   drawerVisible.value = true
+}
+
+function onSelectionChange(selection: DocumentRow[]): void {
+  selectedRows.value = selection
+}
+
+function selectable(row: DocumentRow): boolean {
+  return RECHUNKABLE.includes(row.status)
+}
+
+function isRechunkable(row: DocumentRow): boolean {
+  return RECHUNKABLE.includes(row.status)
+}
+
+function queueHint(row: DocumentRow): string {
+  return row.status === 'PENDING' && row.queuePosition ? `排队中 · 第 ${row.queuePosition} 位` : ''
 }
 
 function formatSize(bytes: number): string {
@@ -220,10 +328,23 @@ defineExpose({ refresh: () => load(true) })
     <div class="toolbar">
       <span class="scope">
         {{ selectedNodeId === null ? '知识库根目录（全部文档）' : '当前节点文档' }}
+        <span v-if="selectedRows.length > 0" class="selected-hint">
+          已选 {{ selectedRows.length }} 篇
+        </span>
       </span>
       <div class="actions">
         <el-button size="small" :loading="loading" data-test="docs-refresh" @click="load(false)">
           刷新
+        </el-button>
+        <el-button
+          v-if="!readonly"
+          size="small"
+          :disabled="selectedRows.length === 0"
+          :loading="rechunking"
+          data-test="docs-batch-rechunk"
+          @click="rechunkSelected"
+        >
+          批量重新裁切
         </el-button>
         <el-button
           v-if="!readonly"
@@ -233,34 +354,55 @@ defineExpose({ refresh: () => load(true) })
           data-test="docs-upload"
           @click="pickFile"
         >
-          上传文档
+          {{ uploadLabel }}
         </el-button>
-        <input ref="fileInput" type="file" class="file-input" @change="onFileChosen" />
+        <input ref="fileInput" type="file" multiple class="file-input" @change="onFilesChosen" />
       </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="alert" />
 
-    <el-table v-loading="loading" :data="rows" size="small" empty-text="该节点下还没有文档">
+    <el-table
+      ref="tableRef"
+      v-loading="loading"
+      :data="rows"
+      row-key="id"
+      size="small"
+      empty-text="该节点下还没有文档"
+      @selection-change="onSelectionChange"
+    >
+      <el-table-column v-if="!readonly" type="selection" width="42" :selectable="selectable" />
       <el-table-column prop="filename" label="文件名" min-width="200" show-overflow-tooltip />
       <el-table-column label="大小" width="92">
         <template #default="{ row }">{{ formatSize(row.size) }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="118">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
           <el-tooltip :disabled="!row.errorMsg" :content="row.errorMsg || ''" placement="top">
-            <el-tag :type="STATUS_TAG[row.status as DocumentStatus]" size="small">
-              {{ STATUS_LABEL[row.status as DocumentStatus] }}
-            </el-tag>
+            <span class="status-cell">
+              <el-tag :type="STATUS_TAG[row.status as DocumentStatus]" size="small">
+                {{ STATUS_LABEL[row.status as DocumentStatus] }}
+              </el-tag>
+              <span v-if="queueHint(row)" class="queue-hint">{{ queueHint(row) }}</span>
+            </span>
           </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="上传时间" width="170">
         <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="190" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button link size="small" data-test="docs-chunks" @click="openChunks(row)">片段</el-button>
+          <el-button
+            v-if="!readonly && isRechunkable(row)"
+            link
+            size="small"
+            data-test="docs-rechunk"
+            @click="rechunkOne(row)"
+          >
+            重新裁切
+          </el-button>
           <el-button
             v-if="!readonly && row.status === 'FAILED'"
             link
@@ -320,6 +462,11 @@ defineExpose({ refresh: () => load(true) })
   font-size: 13px;
 }
 
+.selected-hint {
+  margin-left: 8px;
+  color: #409eff;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -331,6 +478,17 @@ defineExpose({ refresh: () => load(true) })
 
 .file-input {
   display: none;
+}
+
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-hint {
+  color: #909399;
+  font-size: 12px;
 }
 
 .pager {

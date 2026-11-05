@@ -3,7 +3,10 @@ import {
   createNode,
   describeKnowledgeError,
   patchNode,
-  uploadDocument
+  rechunkDocument,
+  rechunkDocuments,
+  uploadDocument,
+  uploadDocuments
 } from '../src/api/knowledge'
 import { setErrorHandlers, ApiError } from '../src/api/client'
 import { setTokens } from '../src/api/session'
@@ -120,5 +123,55 @@ describe('knowledge api', () => {
     expect(describeKnowledgeError(new ApiError(40000, 'name must not be blank', 400))).toBe(
       'name must not be blank'
     )
+  })
+
+  it('uploads a batch one file at a time and keeps going after a failure', async () => {
+    const first = new File(['one'], 'one.md')
+    const second = new File(['two'], 'two.md')
+    const third = new File(['three'], 'three.md')
+
+    fetchMock
+      // one.md: presign → PUT → register
+      .mockResolvedValueOnce(
+        ok({ uploadUrl: 'http://minio.local/one', objectKey: 'kb/7/one.md', expiresInSeconds: 600 })
+      )
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+      .mockResolvedValueOnce(ok({ id: 1, filename: 'one.md', status: 'PENDING' }, 201))
+      // two.md: presign rejected (too large)
+      .mockResolvedValueOnce(failure(40000, '文件大小不能超过 50 MB', 400))
+      // three.md still runs
+      .mockResolvedValueOnce(
+        ok({ uploadUrl: 'http://minio.local/three', objectKey: 'kb/7/three.md', expiresInSeconds: 600 })
+      )
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+      .mockResolvedValueOnce(ok({ id: 3, filename: 'three.md', status: 'PENDING' }, 201))
+
+    const progress: number[] = []
+    const result = await uploadDocuments({
+      kbId: 7,
+      nodeId: 4,
+      files: [first, second, third],
+      onProgress: (done) => progress.push(done)
+    })
+
+    expect(result.uploaded.map((doc) => doc.id)).toEqual([1, 3])
+    expect(result.failed).toEqual([{ filename: 'two.md', message: '文件大小不能超过 50 MB' }])
+    // Sequential, in the order the operator picked them: one → two → three.
+    const registered = fetchMock.mock.calls
+      .filter((call) => call[0] === '/api/documents')
+      .map((call) => JSON.parse(call[1].body as string).filename)
+    expect(registered).toEqual(['one.md', 'three.md'])
+    expect(progress).toEqual([0, 1, 2, 3])
+  })
+
+  it('rechunks a single document and a batch through their own endpoints', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(ok({ requested: 2, accepted: 2, skipped: [] })))
+
+    await rechunkDocument(9)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/documents/9/rechunk')
+
+    await rechunkDocuments([9, 10])
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/documents/rechunk')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ documentIds: [9, 10] })
   })
 })

@@ -5,7 +5,7 @@ Vue 3 + Vite + TypeScript 的 SPA，生产由 nginx 托管并反代 `/api`。后
 - Vue 3.5（`<script setup>` + Composition API）、Vue Router 4、Pinia 2
 - Element Plus 2（中文 locale 在 `main.ts` 统一注入）
 - `@microsoft/fetch-event-source` 消费 SSE
-- 测试：Vitest + jsdom + `@vue/test-utils`，**37 用例**
+- 测试：Vitest + jsdom + `@vue/test-utils`，**47 用例**
 
 ---
 
@@ -207,7 +207,7 @@ ping       {}                            每 15s，前端忽略
 | `Home` | 落地页 |
 | `chat/ChatView` | 会话列表 + 消息流 + 推理面板 + 引用抽屉；「新对话」只列在线 Agent（`listAgents(0, 50, true)`，过滤由服务端完成） |
 | `knowledge/KnowledgeBaseList` | 知识库增删改、重建索引 |
-| `knowledge/KnowledgeBaseDetail` | 节点树 + 文档表 + 上传 |
+| `knowledge/KnowledgeBaseDetail` | 节点树 + 文档表 + 多文件上传 + 批量重新裁切 |
 | `agents/AgentList` | Agent 列表、启停、删除 |
 | `agents/AgentEdit` | 表单：模型、知识库范围、节点范围、参数；含试运行入口 |
 | `providers/ProviderList` | 提供商与模型、连通性探测、远端导入 |
@@ -217,7 +217,7 @@ ping       {}                            每 15s，前端忽略
 | 组件 | 说明 |
 |---|---|
 | `NodeTree` | 节点树，拖拽/重命名/删除；同级重名由后端 40901 拒绝 |
-| `DocumentTable` | 文档列表、状态轮询、重试、分块预览入口 |
+| `DocumentTable` | 文档列表、状态轮询（含排队位次）、多文件上传、单篇/批量重新裁切、重试、分块预览入口 |
 | `ChunkDrawer` | 文档分块抽屉 |
 | `MessageBubble` | 消息正文，`[n]` 渲染成可点上标 |
 | `ReasoningPanel` | 按 round 分组的推理步骤，实时流与持久化记录共用 |
@@ -253,7 +253,8 @@ npm --prefix frontend run test
 | `auth.spec.ts` | 登录、401 刷新一次、刷新失败清会话 |
 | `router.spec.ts` | 守卫：未登录、强制改密、角色不足 |
 | `chat-view.spec.ts` | 消息流、推理步骤按 round 分组、`[n]` 上标 |
-| `knowledge.spec.ts` | 列表/详情、上传流程 |
+| `knowledge.spec.ts` | 列表/详情、上传三步、多文件串行上传与失败续传、重新裁切接口 |
+| `document-table.spec.ts` | 排队位次渲染、批量重新裁切的选中态与请求、单篇重新裁切、多选文件 |
 | `node-tree.spec.ts` | 树的增删改与重名报错 |
 | `agent-form.spec.ts` | 表单校验、跨库 embedding 冲突提示 |
 | `audit-list.spec.ts` | 筛选参数拼装（空筛选不发 query）、详情渲染 |

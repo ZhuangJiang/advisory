@@ -8,6 +8,8 @@ import com.advisory.knowledge.api.dto.CreateDocumentRequest;
 import com.advisory.knowledge.api.dto.DocumentResponse;
 import com.advisory.knowledge.api.dto.PresignRequest;
 import com.advisory.knowledge.api.dto.PresignResponse;
+import com.advisory.knowledge.api.dto.RechunkRequest;
+import com.advisory.knowledge.api.dto.RechunkResponse;
 import com.advisory.knowledge.service.DocumentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -25,8 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 文档相关接口。
  *
- * <p>读接口（详情、列表）对所有已登录用户开放，普通用户因此能看到入库进度；预签名、登记、重试与删除
- * 仅限管理员——普通用户对知识库只读。登记接口新建时返回 201，同一个 {@code objectKey} 重放时返回 200。</p>
+ * <p>读接口（详情、列表）对所有已登录用户开放，普通用户因此能看到入库进度；预签名、登记、重试、
+ * 重新裁切与删除仅限管理员——普通用户对知识库只读。登记接口新建时返回 201，同一个 {@code objectKey}
+ * 重放时返回 200。</p>
  */
 @RestController
 @RequestMapping("/api/documents")
@@ -85,6 +88,29 @@ public class DocumentController {
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<DocumentResponse> retry(@PathVariable Long id) {
         return ApiResponse.ok(service.retry(id));
+    }
+
+    /**
+     * 重新裁切单篇文档：复用已保存的解析文本，按知识库当前切片配置重新切片与向量化。
+     *
+     * <p>与 {@code /retry} 分开：重试只接受 {@code FAILED}，重新裁切接受 {@code READY}/{@code FAILED}。
+     * 两者都只是把文档排进同一条裁切队列，接口立即返回 {@code PENDING} 快照。</p>
+     */
+    @PostMapping("/{id}/rechunk")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<DocumentResponse> rechunk(@PathVariable Long id) {
+        return ApiResponse.ok(service.rechunk(id));
+    }
+
+    /**
+     * 批量重新裁切：一次最多 200 篇，逐篇提交，不满足条件的被跳过并附上原因。
+     *
+     * <p>路径 {@code /rechunk} 与 {@code /{id}/rechunk} 不冲突：后者多一段，前者是固定字面量。</p>
+     */
+    @PostMapping("/rechunk")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<RechunkResponse> rechunkBatch(@Valid @RequestBody RechunkRequest body) {
+        return ApiResponse.ok(service.rechunkBatch(body.documentIds()));
     }
 
     /** 软删除文档并异步清理对象与片段。 */

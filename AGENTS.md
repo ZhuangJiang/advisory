@@ -43,10 +43,10 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 208 用例，需要 Docker（Testcontainers 起 PG/MinIO）
+mvn -f backend/pom.xml test                 # 217 用例，需要 Docker（Testcontainers 起 PG/MinIO）
 
 # 前端
-npm --prefix frontend run test              # 37 用例（vitest + jsdom）
+npm --prefix frontend run test              # 47 用例（vitest + jsdom）
 npm --prefix frontend run build             # vue-tsc --noEmit + vite build
 
 # 全栈（postgres / minio / minio-init / backend / frontend）
@@ -71,6 +71,11 @@ powershell -File scripts/smoke.ps1
 - **改密/禁用即吊销**该用户全部 refresh token；初始化管理员与新建/重置密码的用户 `mustChangePassword=true`，改密前只允许 `me` / `change-password` / `logout`。
 - **上传必须走 presign → PUT → 登记**，PUT 不能带 `Authorization`（MinIO 校验签名）。**一个知识库一个桶**（`<MINIO_BUCKET>-kb-<id>`）：建库时创建，启动时为存量库补齐，`presign` 前再幂等补一次；删库时在事务提交后清桶。共享桶 `<MINIO_BUCKET>` 只作为旧数据的迁移源保留。
 - **预签名必须用公网地址**：SigV4 签名覆盖 host，`app.minio.endpoint`（`minio:9000`）签出的 URL 浏览器用不了，故有 `MINIO_PUBLIC_ENDPOINT` / `app.minio.public-endpoint`；签名客户端固定 region 以避免向公网地址发起 location 查询。
+- **文档任务只有一个入口**：上传、重试、重新裁切、删除清理、重建索引全部排进 `DocumentChunkQueue`
+  （单线程 FIFO，容量 `app.ingest.queue-capacity`，默认 500）。不要为了「快一点」再开线程池并行跑流水线——
+  embedding 服务一限流就是整批失败。队列满时文档置 `FAILED`（可重试），绝不留在 `PENDING`。
+- **重新裁切 ≠ 重试**：`/retry` 只收 `FAILED` 且重新解析；`/rechunk` 收 `READY`/`FAILED`，复用
+  `parsed.md`（`ParsedDocument#ofMarkdown`）只重切重向量化，`parsed_key` 缺失时自动退回完整解析。
 - **embedding 维度固定 1024**，一个 Agent 引用的多个知识库必须同一 embedding 模型。
 - **Flyway V1–V3 已发布并应用，一个字节都不要改**（包括注释）：改了会变 checksum，既有环境启动即 `validate` 失败。变更一律新建 V4+。
 - 后端会话/消息/步骤用 `JdbcTemplate` 手写 SQL（避免 JPA 一级缓存返回旧值）；配置类实体才用 JPA。

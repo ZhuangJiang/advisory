@@ -95,6 +95,7 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 | `MINIO_REGION` | `us-east-1` | 写死，避免签名前先向 endpoint 发一次 `?location=` 探测 |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` | `minioadmin` / `minioadmin` / `advisory` | 凭证与桶名前缀（知识库桶为 `<前缀>-kb-<id>`） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin` | 仅首次启动、库中无管理员时生效 |
+| `CHAT_CONTEXT_WINDOW_TOKENS` | `8192` | Ollama 请求里的 `num_ctx`，**同时**是编排器裁剪证据时用的窗口，两处共用一个值。Ollama 服务端默认只有 4096，跨轮证据很容易撑爆；显存紧张时调小，换大窗口模型时调大 |
 | `app.embedding.dimension` | `1024` | 固定维度，改它等于换掉整个向量契约 |
 
 `app.jwt.access-ttl=PT30M`、`refresh-ttl=P7D` 写在 `application.yml` 里，没有做成环境变量。
@@ -148,6 +149,7 @@ HTTP
 | 40905 | 409 | `KB_REINDEXING` 知识库正在重建 |
 | 40906 | 409 | `CONVERSATION_BUSY` 同一会话已有提问在跑 |
 | 50000 | 500 | `INTERNAL_ERROR` 兜底，不泄露堆栈 |
+| 50010 | 500 | `MODEL_CONTEXT_EXCEEDED` 提示词超出模型窗口。编排器据此降级为 `TRUNCATED`，其它提供商故障仍按 `INTERNAL_ERROR` 失败 |
 
 ---
 
@@ -262,6 +264,8 @@ PENDING → PARSING → CHUNKING → EMBEDDING → READY
 所有状态写入都是 **CAS**：`UPDATE documents SET status=? WHERE id=? AND status=?`。
 影响行数为 0 说明别的流程已经推进过这行，任务只记日志并放弃，**绝不覆盖更新的状态**。
 
+重新裁切走的是同一套状态机，只是跳过 `PARSING`：`PENDING → CHUNKING → EMBEDDING → READY`。
+
 - 解析：Tika 抽文本，产物（Markdown）写回 MinIO 的 `parsed_key`；
 - 切分：`StructureAwareChunker` 按标题层级切，每块带 `heading_path`（如 `指南 > 第一章 > 1.1 背景`）；
 - 向量化：按知识库的 `embedding_model_id` 批量 `embed()`，32 条一批；
@@ -269,6 +273,45 @@ PENDING → PARSING → CHUNKING → EMBEDDING → READY
   片段数与向量数不一致属内部错误（`INTERNAL_ERROR`），向量长度不对则仍是 `EMBEDDING_DIMENSION_MISMATCH`。
 
 **零片段不算失败**：空文档、纯表格解析不出正文时会以 `READY` 结束，`chunks` 为空。
+
+### 裁切队列（`DocumentChunkQueue`）
+
+解析、切片、向量化不并发跑，而是排进一条**单线程 FIFO 队列**：
+
+```
+上传/重试/重新裁切/重建索引 ─┐
+删除后的清理 ──────────────┴→ DocumentChunkQueue（1 线程，先进先出）→ 一篇一篇跑流水线
+```
+
+- **为什么串行**：最贵的一步是向量化，要按批把整篇文档发给 embedding 服务。并发几个文档，一次上传
+  几十个文件就会同时打出几十条请求，提供商一限流就是整批失败——慢一点比全挂好。
+- **顺序**：提交顺序即执行顺序。重复入队是允许的（由状态 CAS 决定谁真正干活），队列用 ticket 精确摘除
+  条目，因此同一文档的两条任务不会互相顶掉位次。
+- **容量**：`app.ingest.queue-capacity`（默认 500，环境变量 `INGEST_QUEUE_CAPACITY`）。满了返回
+  `false`，文档直接置 `FAILED`、`error_msg = "裁切队列已满，请稍后重试"`，用户可以点重试——
+  绝不让它无声地停在 `PENDING`。
+- **位次**：`positionOf(id)` 返回排队位次（正在执行的那个返回 0）。列表/详情接口把它填进
+  `queuePosition`，只有 `PENDING` 的行才有值。
+- **删除清理也走这条队列**：保证「清理删片段」和「流水线写片段」永远一前一后，不会交错。
+- **重建索引复用同一条队列**：`ingestBatch(ids)` 逐篇投递并等全部结束，重建不会另开一路并发去抢
+  embedding，只会排在已有任务之后。
+
+### 重新裁切
+
+| 接口 | 用途 |
+|---|---|
+| `POST /api/documents/{id}/retry` | 只接受 `FAILED`，**重新解析**原始文件 |
+| `POST /api/documents/{id}/rechunk` | 接受 `READY`/`FAILED`，**复用 `parsed.md`**，按当前的 `chunk_config` 重切 |
+| `POST /api/documents/rechunk` | 批量版：`{"documentIds":[...]}`，最多 200 篇，逐篇提交 |
+
+- 重新裁切直接以 CAS 从 `READY`/`FAILED` 落到 `PENDING` 再入队，接口立即返回 `PENDING` 快照；
+  中间状态（`PENDING`/`PARSING`/`CHUNKING`/`EMBEDDING`）一律 409——它已经在队列里了。
+- 复用解析产物的条件是 `parsed_key` 非空且对象读得出来（`StorageService#readText`）；否则流水线自动
+  退回完整解析，调用方不需要先检查。章节由 `ParsedDocument#ofMarkdown` 从同一份 Markdown 重新推导，
+  所以切片结果与完整解析路径一致。
+- 批量接口不整单失败：不存在的 id、正在入库的文档、知识库正在重建，都只进 `skipped` 并带中文原因，
+  返回 `{requested, accepted, skipped:[{id, reason}]}`。`requested` 是**去重后**的篇数。
+- 知识库 `REINDEXING` 期间拒绝重新裁切（409 `KB_REINDEXING`）。
 
 ### 重启恢复
 
@@ -279,7 +322,8 @@ PENDING → PARSING → CHUNKING → EMBEDDING → READY
 ### 重建索引
 
 `POST /api/knowledge-bases/{id}/reindex` 把 `reindex_status` 置 `REINDEXING` 后立即返回 **202**，
-后台重算全部向量。期间：
+后台重算全部向量。任务把该库所有非 `DELETED` 文档重置为 `PENDING`，再逐篇投进上面那条裁切队列并等整批
+结束（`DocumentIngestWorker#ingestBatch`），最后收敛状态。期间：
 
 - 该库的**上传与检索都被拒**（检索 409 `KB_REINDEXING`）；
 - 重复触发返回 409；
@@ -332,9 +376,17 @@ PLAN（一次，产出 1–3 条查询）
 | PLAN 结构化输出解析失败 | 退回用户原始问题，流程继续 |
 | REFLECT 连续两次解析失败 | 直接跳 ANSWER，标记 `truncated=true` |
 | 单步超过 60s / 整体超过 180s | 带着已有证据进 ANSWER，标记 `truncated=true`；模型来不及答就用上轮草稿 |
+| REFLECT 提示词超窗 | 不再重试，直接进 ANSWER，标记 `truncated=true` |
+| ANSWER 提示词超窗 | 返回固定话术（`CONTEXT_EXCEEDED_ANSWER`）并标记 `truncated=true`，**不是** `FAILED`；401、模型不存在等其它故障仍如实失败 |
 | 一条证据都没有 | **不调模型**，返回固定话术（不得凭参数化知识作答） |
 
 证据跨轮累积，按 `chunkId` 以首次出现顺序去重，因此正文里的 `[n]` 与 `citations[n-1]` 严格对应。
+
+**证据有 token 预算**（`PromptBudget`）：窗口减去输出预留（1024）、安全余量、系统提示词、问题与草稿，
+剩下的才是证据能占的额度；`numberedEvidence(chunks, budget)` 按此顺序装入，装不下就截断当前片段正文并
+在末尾注明「另有 N 个片段未列入」。编号取原始下标、绝不重排，所以被省略的片段不会让 `[n]` 错位。
+这条链路是本地小模型（Ollama 默认 4096 窗口）能跑通的前提，删掉它就会退化成一问就
+`exceeds the available context size`。
 
 ### SSE 帧序
 
@@ -407,7 +459,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/pom.xml test` → **208 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/pom.xml test` → **217 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 
 | 类型 | 位置 | 做法 |
 |---|---|---|

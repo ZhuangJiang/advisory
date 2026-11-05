@@ -214,6 +214,25 @@ public class StorageService {
     }
 
     /**
+     * 读取文本对象（解析产物）。
+     *
+     * <p>对象不存在、桶不存在、读取中断都返回 {@code Optional.empty()}：调用方（重新裁切）遇到这种情况
+     * 会退回完整解析，真实的基础设施故障也会在那一步以更准确的文案暴露出来。</p>
+     *
+     * @param kbId      知识库主键
+     * @param objectKey 对象键
+     * @return 文本内容，取不到时为空
+     */
+    public Optional<String> readText(long kbId, String objectKey) {
+        try (InputStream in = getObject(kbId, objectKey)) {
+            return Optional.of(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            log.debug("读取知识库 {} 的文本对象 {} 失败，按不存在处理：{}", kbId, objectKey, e.toString());
+            return Optional.empty();
+        }
+    }
+
+    /**
      * 删除对象；对象本就不存在时视为成功。
      *
      * @param kbId      知识库主键

@@ -62,6 +62,8 @@ export interface DocumentRow {
   checksum: string | null
   status: DocumentStatus
   errorMsg: string | null
+  /** 仅 `PENDING` 时有值：前面还有几篇文档在裁切队列里排着（从 1 开始）。 */
+  queuePosition?: number | null
   createdAt: string
   updatedAt: string
 }
@@ -224,6 +226,73 @@ export async function uploadDocument(input: {
 
 export function retryDocument(id: number): Promise<DocumentRow> {
   return http.post(`/api/documents/${id}/retry`)
+}
+
+/**
+ * 重新裁切单篇文档：复用后端已保存的解析文本，按知识库当前的切片配置重新切片并向量化。
+ *
+ * 和 `retryDocument` 的区别：重试只服务于 `FAILED`（会重新解析原文件），重新裁切对 `READY` 也有意义，
+ * 调完切片参数后不必整库重建。
+ */
+export function rechunkDocument(id: number): Promise<DocumentRow> {
+  return http.post(`/api/documents/${id}/rechunk`)
+}
+
+export interface RechunkSkip {
+  id: number
+  reason: string
+}
+
+export interface RechunkResult {
+  requested: number
+  accepted: number
+  skipped: RechunkSkip[]
+}
+
+/** 批量重新裁切：后端逐篇提交，不满足条件的只被跳过并附原因，不会整批失败。 */
+export function rechunkDocuments(documentIds: number[]): Promise<RechunkResult> {
+  return http.post('/api/documents/rechunk', { documentIds })
+}
+
+export interface UploadFailure {
+  filename: string
+  message: string
+}
+
+export interface UploadBatchResult {
+  uploaded: DocumentRow[]
+  failed: UploadFailure[]
+}
+
+/**
+ * 多文件上传：逐个串行跑「presign → PUT → 登记」三步。
+ *
+ * 串行是刻意的。上传本身可以并发，但每个文件登记后都会进后端同一条裁切队列；串行提交让队列顺序等于
+ * 用户勾选顺序，也避免几十个大的 PUT 同时打满浏览器连接数。单个文件失败只记进 `failed`，其余继续——
+ * 批量上传时「一个坏文件拖垮整批」是最让人恼火的失败方式。
+ */
+export async function uploadDocuments(input: {
+  kbId: number
+  nodeId: number | null
+  files: File[]
+  onProgress?: (done: number, total: number, filename: string) => void
+}): Promise<UploadBatchResult> {
+  const uploaded: DocumentRow[] = []
+  const failed: UploadFailure[] = []
+  const total = input.files.length
+
+  for (let index = 0; index < total; index++) {
+    const file = input.files[index]
+    input.onProgress?.(index, total, file.name)
+    try {
+      uploaded.push(await uploadDocument({ kbId: input.kbId, nodeId: input.nodeId, file }))
+    } catch (e) {
+      failed.push({ filename: file.name, message: describeKnowledgeError(e) })
+    }
+  }
+  input.onProgress?.(total, total, '')
+
+  return { uploaded, failed }
 }
 
 export function deleteDocument(id: number): Promise<void> {
