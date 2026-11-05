@@ -80,7 +80,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(authentication);
         } catch (RuntimeException e) {
             // 令牌非法、过期或被篡改：保持匿名上下文，交由授权层通过 AuthenticationEntryPoint 统一返回 401。
-            log.debug("Rejected bearer token: {}", e.getMessage());
+            // 这里用 WARN 而不是 DEBUG：根级别默认 INFO，DEBUG 等于什么都没记，而「为什么 401」恰恰是排障第一问。
+            // 只记路径与失败原因，绝不记令牌原文。
+            log.warn("拒绝 Bearer 令牌 {}: {}", request.getRequestURI(), e.getMessage());
             SecurityContextHolder.clearContext();
         }
 

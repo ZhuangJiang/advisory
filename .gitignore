@@ -4,6 +4,7 @@ dist/
 .env
 *.log
 .idea/
+*.iml
 .vscode/
 backend/data/
 backend/.settings

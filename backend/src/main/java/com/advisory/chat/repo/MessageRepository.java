@@ -6,6 +6,8 @@ import com.advisory.chat.orchestration.TokenUsage;
 import com.advisory.knowledge.retrieval.RetrievedChunk;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -22,6 +24,8 @@ import java.util.Optional;
  */
 @Repository
 public class MessageRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(MessageRepository.class);
 
     private static final String COLUMNS = """
             id, conversation_id, role, content, citations::text AS citations, status,
@@ -111,6 +115,8 @@ public class MessageRepository {
             return objectMapper.readValue(json, CITATIONS);
         } catch (Exception e) {
             // 引用数据解析失败时不能连累答案本身：宁可少显示引用，也要把回答展示出来。
+            // 记 DEBUG：降级是故意的，但必须留下线索，否则「引用突然没了」没法追。
+            log.debug("引用数据解析失败，按空引用返回: {}", e.getMessage());
             return List.of();
         }
     }
@@ -122,6 +128,7 @@ public class MessageRepository {
         try {
             return objectMapper.readValue(json, TokenUsage.class);
         } catch (Exception e) {
+            log.debug("用量数据解析失败，按零用量返回: {}", e.getMessage());
             return TokenUsage.ZERO;
         }
     }
@@ -130,6 +137,7 @@ public class MessageRepository {
         try {
             return objectMapper.writeValueAsString(value == null ? List.of() : value);
         } catch (Exception e) {
+            log.debug("载荷序列化失败，按空数组写入: {}", e.getMessage());
             return "[]";
         }
     }

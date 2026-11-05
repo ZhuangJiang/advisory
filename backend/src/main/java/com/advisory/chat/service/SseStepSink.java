@@ -171,6 +171,7 @@ public class SseStepSink implements StepSink {
                 emitter.send(SseEmitter.event().name("ping").data("{}", MediaType.APPLICATION_JSON));
             } catch (IOException | RuntimeException e) {
                 closed = true; // 客户端已断开：编排继续跑完，流不再写
+                log.debug("心跳写入失败，消息 {} 的客户端已断开: {}", messageId, e.getMessage());
             }
         }
     }
@@ -183,7 +184,7 @@ public class SseStepSink implements StepSink {
         try {
             json = objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
-            log.warn("could not serialize SSE payload for {}: {}", event, e.getMessage());
+            log.warn("SSE 载荷序列化失败，事件 {}: {}", event, e.getMessage());
             return;
         }
         synchronized (sendLock) {
