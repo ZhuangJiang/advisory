@@ -110,7 +110,7 @@ public class KnowledgeBaseService {
         // 与删除同样的防护：重建过程中改动 embedding_model_id 或 chunk_config，
         // 会让正在运行的重建读到一半新一半旧的配置，最终产出两套参数切出来的片段。
         if ("REINDEXING".equals(kb.getReindexStatus())) {
-            throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
+            throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引");
         }
         if (body.name() != null) {
             kb.setName(validateName(body.name(), MAX_NAME_LENGTH));
@@ -133,7 +133,7 @@ public class KnowledgeBaseService {
     public void delete(Long id) {
         KnowledgeBase kb = find(id);
         if ("REINDEXING".equals(kb.getReindexStatus())) {
-            throw new AppException(ErrorCode.KB_REINDEXING, "Knowledge base is reindexing");
+            throw new AppException(ErrorCode.KB_REINDEXING, "知识库正在重建索引");
         }
         // kb_ids 里的 id 可能存成 JSON 数字，也可能存成字符串（"5"）；因此把文本元素按 bigint 比较，
         // 而不是依赖 jsonb 包含运算对某一种表示形式的假设。
@@ -144,7 +144,7 @@ public class KnowledgeBaseService {
                 WHERE e.elem ~ '^-?[0-9]+$' AND e.elem::bigint = ?
                 """, Long.class, id);
         if (references != null && references > 0) {
-            throw new AppException(ErrorCode.KB_IN_USE, "Knowledge base is referenced by an agent");
+            throw new AppException(ErrorCode.KB_IN_USE, "知识库已被某个 Agent 引用");
         }
         repository.delete(kb);
     }
@@ -177,12 +177,12 @@ public class KnowledgeBaseService {
         return jdbc.query(DETAIL_SQL, ROW_MAPPER, id)
                 .stream()
                 .findFirst()
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在"));
     }
 
     private KnowledgeBase find(Long id) {
         return repository.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在"));
     }
 
     /**
@@ -273,14 +273,14 @@ public class KnowledgeBaseService {
 
     private static String validateName(String raw, int maxLength) {
         if (raw == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         String name = raw.trim();
         if (name.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         if (name.length() > maxLength) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not exceed " + maxLength + " characters");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称长度不能超过 " + maxLength + " 个字符");
         }
         rejectControlCharacters(name);
         return name;
@@ -289,7 +289,7 @@ public class KnowledgeBaseService {
     private static void rejectControlCharacters(String name) {
         for (int i = 0; i < name.length(); i++) {
             if (Character.isISOControl(name.charAt(i))) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not contain control characters");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能包含控制字符");
             }
         }
     }
@@ -310,7 +310,7 @@ public class KnowledgeBaseService {
         try {
             objectMapper.readTree(trimmed);
         } catch (JsonProcessingException e) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "chunkConfig must be valid JSON");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "分块配置必须是合法的 JSON");
         }
         return trimmed;
     }

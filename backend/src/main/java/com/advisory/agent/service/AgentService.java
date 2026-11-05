@@ -106,7 +106,7 @@ public class AgentService {
         requireAgent(agentId);
         return versions.findSnapshot(agentId, version)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND,
-                        "Agent version " + version + " not found"));
+                        "Agent 版本 " + version + " 不存在"));
     }
 
     // ------------------------------------------------------------------ 写操作
@@ -116,7 +116,7 @@ public class AgentService {
     public AgentResponse create(CreateAgentRequest body) {
         String name = validateName(body.name());
         if (agents.existsByName(name)) {
-            throw new AppException(ErrorCode.CONFLICT, "An agent named '" + name + "' already exists");
+            throw new AppException(ErrorCode.CONFLICT, "名为 '" + name + "' 的 Agent 已存在");
         }
         String systemPrompt = validateSystemPrompt(body.systemPrompt());
         String description = normalizeDescription(body.description());
@@ -138,7 +138,7 @@ public class AgentService {
             id = agents.insert(snapshot, description, enabled);
         } catch (DuplicateKeyException e) {
             // ux_agents_name 是并发新建同名 Agent 的最后一道防线
-            throw new AppException(ErrorCode.CONFLICT, "An agent named '" + name + "' already exists");
+            throw new AppException(ErrorCode.CONFLICT, "名为 '" + name + "' 的 Agent 已存在");
         }
         versions.insert(id, 1, snapshot);
         return AgentResponse.from(requireAgent(id));
@@ -153,11 +153,11 @@ public class AgentService {
     @Transactional
     public AgentResponse update(Long id, UpdateAgentRequest body) {
         Agent current = agents.findByIdForUpdate(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
 
         String name = body.name() == null ? current.name() : validateName(body.name());
         if (!name.equals(current.name()) && agents.existsByNameExcluding(name, id)) {
-            throw new AppException(ErrorCode.CONFLICT, "An agent named '" + name + "' already exists");
+            throw new AppException(ErrorCode.CONFLICT, "名为 '" + name + "' 的 Agent 已存在");
         }
         String systemPrompt = body.systemPrompt() == null
                 ? current.systemPrompt()
@@ -190,7 +190,7 @@ public class AgentService {
         try {
             agents.update(id, snapshot, description, enabled, newVersion);
         } catch (DuplicateKeyException e) {
-            throw new AppException(ErrorCode.CONFLICT, "An agent named '" + name + "' already exists");
+            throw new AppException(ErrorCode.CONFLICT, "名为 '" + name + "' 的 Agent 已存在");
         }
         versions.insert(id, newVersion, snapshot);
         return AgentResponse.from(requireAgent(id));
@@ -202,7 +202,7 @@ public class AgentService {
         requireAgent(id);
         if (agents.countConversations(id) > 0) {
             throw new AppException(ErrorCode.CONFLICT,
-                    "Agent has conversations and cannot be deleted; archive them first");
+                    "该 Agent 下已有会话，无法删除；请先归档会话");
         }
         agents.deleteById(id); // 版本行随级联清理
     }
@@ -211,22 +211,22 @@ public class AgentService {
 
     private Agent requireAgent(Long id) {
         return agents.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
     }
 
     private static String validateName(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         String name = raw.trim();
         if (name.length() > MAX_NAME_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "name must not exceed " + MAX_NAME_LENGTH + " characters");
+                    "名称长度不能超过 " + MAX_NAME_LENGTH + " 个字符");
         }
         for (int i = 0; i < name.length(); i++) {
             if (Character.isISOControl(name.charAt(i))) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "name must not contain control characters");
+                        "名称不能包含控制字符");
             }
         }
         return name;
@@ -234,7 +234,7 @@ public class AgentService {
 
     private static String validateSystemPrompt(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "systemPrompt must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "系统提示词不能为空");
         }
         return raw;
     }
@@ -249,12 +249,12 @@ public class AgentService {
 
     private static List<Long> normalizeKbIds(List<Long> raw) {
         if (raw == null || raw.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "kbIds must not be empty");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "知识库 id 列表不能为空");
         }
         LinkedHashSet<Long> unique = new LinkedHashSet<>();
         for (Long kbId : raw) {
             if (kbId == null || kbId <= 0) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "kbIds must contain positive ids");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "知识库 id 必须是正整数");
             }
             unique.add(kbId);
         }
@@ -269,14 +269,14 @@ public class AgentService {
         raw.forEach((kbId, nodeIds) -> {
             if (kbId == null || kbId <= 0) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "nodeScope keys must be knowledge base ids");
+                        "nodeScope 的键必须是知识库 id");
             }
             List<Long> ids = new ArrayList<>();
             if (nodeIds != null) {
                 for (Long nodeId : nodeIds) {
                     if (nodeId == null || nodeId <= 0) {
                         throw new AppException(ErrorCode.VALIDATION_FAILED,
-                                "nodeScope values must be node ids");
+                                "nodeScope 的值必须是节点 id");
                     }
                     ids.add(nodeId);
                 }
@@ -288,14 +288,14 @@ public class AgentService {
 
     private Long validateChatModel(Long chatModelId) {
         if (chatModelId == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "chatModelId is required");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定对话模型");
         }
         String capability = agents.findModelCapability(chatModelId)
                 .orElseThrow(() -> new AppException(ErrorCode.VALIDATION_FAILED,
-                        "chatModelId " + chatModelId + " does not exist"));
+                        "对话模型 " + chatModelId + " 不存在"));
         if (!"CHAT".equals(capability)) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "chatModelId " + chatModelId + " must reference a CHAT model");
+                    "对话模型 " + chatModelId + " 必须是 CHAT 类型的模型");
         }
         return chatModelId;
     }
@@ -310,20 +310,19 @@ public class AgentService {
         List<AgentRepository.KbEmbedding> rows = agents.findKbEmbeddings(kbIds);
         if (rows.size() != kbIds.size()) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "one or more knowledge bases in kbIds do not exist");
+                    "kbIds 中有一个或多个知识库不存在");
         }
         Long shared = null;
         for (AgentRepository.KbEmbedding row : rows) {
             if (row.embeddingModelId() == null) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "knowledge base " + row.kbId() + " has no embedding model");
+                        "知识库 " + row.kbId() + " 未配置嵌入模型");
             }
             if (shared == null) {
                 shared = row.embeddingModelId();
             } else if (!shared.equals(row.embeddingModelId())) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "all knowledge bases must share the same embedding model ("
-                                + shared + " vs " + row.embeddingModelId() + ")");
+                        "所有知识库必须使用同一个嵌入模型（" + shared + " 与 " + row.embeddingModelId() + " 不一致）");
             }
         }
         return shared;
@@ -334,15 +333,15 @@ public class AgentService {
             Long kbId = entry.getKey();
             if (!kbIds.contains(kbId)) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "nodeScope references knowledge base " + kbId + " which is not in kbIds");
+                        "nodeScope 引用了不在 kbIds 中的知识库 " + kbId);
             }
             for (Long nodeId : entry.getValue()) {
                 Long owner = agents.findNodeKbId(nodeId)
                         .orElseThrow(() -> new AppException(ErrorCode.VALIDATION_FAILED,
-                                "node " + nodeId + " does not exist"));
+                                "节点 " + nodeId + " 不存在"));
                 if (!owner.equals(kbId)) {
                     throw new AppException(ErrorCode.VALIDATION_FAILED,
-                            "node " + nodeId + " does not belong to knowledge base " + kbId);
+                            "节点 " + nodeId + " 不属于知识库 " + kbId);
                 }
             }
         }
@@ -351,14 +350,14 @@ public class AgentService {
     private static int validateMaxRounds(int maxRounds) {
         if (maxRounds < MIN_MAX_ROUNDS || maxRounds > MAX_MAX_ROUNDS) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "maxRounds must be between " + MIN_MAX_ROUNDS + " and " + MAX_MAX_ROUNDS);
+                    "最大轮次必须在 " + MIN_MAX_ROUNDS + " 到 " + MAX_MAX_ROUNDS + " 之间");
         }
         return maxRounds;
     }
 
     private static int validateTopK(int topK) {
         if (topK < 1 || topK > MAX_TOP_K) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "topK must be between 1 and " + MAX_TOP_K);
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "topK 必须在 1 到 " + MAX_TOP_K + " 之间");
         }
         return topK;
     }
@@ -367,7 +366,7 @@ public class AgentService {
     private static BigDecimal validateTemperature(BigDecimal raw) {
         BigDecimal temperature = raw.setScale(2, RoundingMode.HALF_UP);
         if (temperature.signum() < 0 || temperature.compareTo(MAX_TEMPERATURE) > 0) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "temperature must be between 0 and 2");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "temperature 必须在 0 到 2 之间");
         }
         return temperature;
     }

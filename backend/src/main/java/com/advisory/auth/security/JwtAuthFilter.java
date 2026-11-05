@@ -68,7 +68,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         try {
             ParsedToken parsed = jwtService.parse(token);
             if (parsed.mustChangePassword() && !MUST_CHANGE_ALLOWED.contains(request.getRequestURI())) {
-                writeError(response, ErrorCode.PASSWORD_CHANGE_REQUIRED, "Password change required");
+                writeError(response, ErrorCode.PASSWORD_CHANGE_REQUIRED, "请先修改初始密码");
                 return;
             }
 

@@ -70,7 +70,7 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
         if (vector == null || vector.length != dimension) {
             int actual = vector == null ? 0 : vector.length;
             throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
-                    "Embedding dimension mismatch: expected " + dimension + ", got " + actual);
+                    "嵌入维度不匹配：期望 " + dimension + "，实际 " + actual);
         }
     }
 
@@ -104,7 +104,7 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
             }
         }
         throw lastFailure == null
-                ? new AppException(ErrorCode.INTERNAL_ERROR, "embedding provider call failed")
+                ? new AppException(ErrorCode.INTERNAL_ERROR, "调用嵌入服务失败")
                 : lastFailure;
     }
 
@@ -113,7 +113,7 @@ public class SpringAiEmbeddingGateway implements EmbeddingGateway {
             Thread.sleep(millis);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new AppException(ErrorCode.INTERNAL_ERROR, "embedding retry interrupted");
+            throw new AppException(ErrorCode.INTERNAL_ERROR, "嵌入重试被中断");
         }
     }
 }

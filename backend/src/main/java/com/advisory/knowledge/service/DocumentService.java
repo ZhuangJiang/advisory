@@ -139,11 +139,11 @@ public class DocumentService {
 
         long actualSize = storage.stat(objectKey)
                 .orElseThrow(() -> new AppException(ErrorCode.VALIDATION_FAILED,
-                        "Uploaded object not found; upload the file before creating the document"))
+                        "未找到已上传的文件，请先上传再创建文档"))
                 .size();
         if (actualSize > MAX_SIZE_BYTES) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "Uploaded object must not exceed " + MAX_SIZE_BYTES + " bytes");
+                    "上传文件不能超过 " + MAX_SIZE_BYTES + " 字节");
         }
 
         Document document = new Document(kbId, request.nodeId(), filename, objectKey);
@@ -178,7 +178,7 @@ public class DocumentService {
      */
     private static Creation replay(Document existing) {
         if (DocumentStatus.DELETED.name().equals(existing.getStatus())) {
-            throw new AppException(ErrorCode.CONFLICT, "Document was deleted");
+            throw new AppException(ErrorCode.CONFLICT, "文档已删除");
         }
         return new Creation(DocumentResponse.from(existing), false);
     }
@@ -189,7 +189,7 @@ public class DocumentService {
                         ROW_MAPPER, documentId)
                 .stream()
                 .findFirst()
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Document not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在"));
     }
 
     /** 分页列出知识库下的文档。 */
@@ -263,10 +263,10 @@ public class DocumentService {
         // 走 JDBC 读取：worker 在别处做过比较并设置写入之后，JPA 的 findById 可能返回一级缓存里的旧实体。
         DocumentResponse current = get(documentId);
         if (!DocumentStatus.FAILED.name().equals(current.status())) {
-            throw new AppException(ErrorCode.CONFLICT, "Only FAILED documents can be retried");
+            throw new AppException(ErrorCode.CONFLICT, "只有失败状态的文档才能重试");
         }
         if (!worker.transition(documentId, DocumentStatus.FAILED, DocumentStatus.PENDING, null)) {
-            throw new AppException(ErrorCode.CONFLICT, "Document status changed concurrently");
+            throw new AppException(ErrorCode.CONFLICT, "文档状态已被并发修改");
         }
         // 在 worker 再次推进状态之前，先把 PENDING 这一刻的快照读出来。
         DocumentResponse pending = get(documentId);
@@ -281,7 +281,7 @@ public class DocumentService {
                 WHERE id = ? AND status <> 'DELETED'
                 """, documentId);
         if (updated == 0) {
-            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Document not found");
+            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在");
         }
 
         worker.enqueueCleanup(documentId);
@@ -290,10 +290,10 @@ public class DocumentService {
 
     private Long requireKnowledgeBase(Long kbId) {
         if (kbId == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "kbId must not be null");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定知识库");
         }
         if (!knowledgeBases.existsById(kbId)) {
-            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found");
+            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在");
         }
         // 裁决 R2（Task 7）：知识库重建索引期间拒绝上传；Task 8 的检索也走同一道闸门。
         String reindexStatus = jdbc.queryForObject(
@@ -309,28 +309,28 @@ public class DocumentService {
             return;
         }
         KbNodeRow node = nodes.findById(nodeId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Node not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "节点不存在"));
         if (!node.kbId().equals(kbId)) {
-            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Node not found in this knowledge base");
+            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "该知识库下不存在此节点");
         }
     }
 
     private static String validateFilename(String raw) {
         if (raw == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "filename must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "文件名不能为空");
         }
         String filename = raw.trim();
         if (filename.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "filename must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "文件名不能为空");
         }
         if (filename.length() > MAX_FILENAME_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "filename must not exceed " + MAX_FILENAME_LENGTH + " characters");
+                    "文件名长度不能超过 " + MAX_FILENAME_LENGTH + " 个字符");
         }
         for (int i = 0; i < filename.length(); i++) {
             if (Character.isISOControl(filename.charAt(i))) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
-                        "filename must not contain control characters");
+                        "文件名不能包含控制字符");
             }
         }
         return filename;
@@ -339,25 +339,25 @@ public class DocumentService {
     private static void validateSize(Long size) {
         if (size != null && size > MAX_SIZE_BYTES) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "size must not exceed " + MAX_SIZE_BYTES + " bytes");
+                    "文件大小不能超过 " + MAX_SIZE_BYTES + " 字节");
         }
     }
 
     private static String validateObjectKey(Long kbId, String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "objectKey must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "对象键不能为空");
         }
         String objectKey = raw.trim();
         String prefix = "kb/" + kbId + "/";
         if (!objectKey.startsWith(prefix)) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "objectKey must belong to knowledge base " + kbId);
+                    "对象键不属于知识库 " + kbId);
         }
         if (objectKey.contains("..") || objectKey.contains("\\")) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "objectKey contains an illegal segment");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "对象键包含非法片段");
         }
         if (objectKey.length() > 1024) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "objectKey must not exceed 1024 characters");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "对象键长度不能超过 1024 个字符");
         }
         return objectKey;
     }
@@ -366,7 +366,7 @@ public class DocumentService {
         String sanitized = sanitizeFilename(filename);
         if (sanitized.isEmpty()) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "filename must contain at least one of [A-Za-z0-9._-]");
+                    "文件名至少需要包含 [A-Za-z0-9._-] 中的一个字符");
         }
         return "kb/" + kbId + "/" + UUID.randomUUID() + "/" + sanitized;
     }

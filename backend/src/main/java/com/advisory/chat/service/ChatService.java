@@ -98,12 +98,12 @@ public class ChatService {
     @Transactional
     public ConversationResponse createConversation(Long agentId, Long userId, String title) {
         if (agentId == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "agentId is required");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定 Agent");
         }
         Agent agent = agents.findById(agentId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
         if (!agent.enabled()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "agent is disabled");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "该 Agent 已被禁用");
         }
         long id = conversations.insert(agent.id(), agent.currentVersion(), userId,
                 normalizeTitle(title));
@@ -136,7 +136,7 @@ public class ChatService {
     @Transactional(readOnly = true)
     public MessageDetailResponse getMessage(Long messageId, CurrentUser user) {
         Message message = messages.findById(messageId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Message not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "消息不存在"));
         requireConversation(message.conversationId(), user.id(), user.role());
         return MessageDetailResponse.of(message, steps.findByMessage(messageId));
     }
@@ -156,11 +156,11 @@ public class ChatService {
     public SseEmitter start(Long conversationId, CurrentUser user, String content) {
         String question = content == null ? "" : content.trim();
         if (question.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "content must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "内容不能为空");
         }
         if (question.length() > MAX_QUESTION_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "content must not exceed " + MAX_QUESTION_LENGTH + " characters");
+                    "内容长度不能超过 " + MAX_QUESTION_LENGTH + " 个字符");
         }
         Conversation conversation = requireConversation(conversationId, user.id(), user.role());
         // 管理员可以读任意会话（审计视图正是如此），但不能替别人提问：
@@ -249,9 +249,9 @@ public class ChatService {
     private Conversation requireConversation(Long conversationId, Long userId, UserRole role) {
         Conversation conversation = conversations.findById(conversationId)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND,
-                        "Conversation not found"));
+                        "会话不存在"));
         if (role != UserRole.ADMIN && conversation.userId() != userId) {
-            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Conversation not found");
+            throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "会话不存在");
         }
         return conversation;
     }

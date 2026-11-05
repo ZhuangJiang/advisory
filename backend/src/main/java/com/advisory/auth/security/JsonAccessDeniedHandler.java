@@ -51,6 +51,6 @@ public class JsonAccessDeniedHandler implements AccessDeniedHandler {
         response.setStatus(ErrorCode.FORBIDDEN.getHttpStatus().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        objectMapper.writeValue(response.getWriter(), ApiResponse.error(ErrorCode.FORBIDDEN, "Forbidden"));
+        objectMapper.writeValue(response.getWriter(), ApiResponse.error(ErrorCode.FORBIDDEN, "没有访问权限"));
     }
 }

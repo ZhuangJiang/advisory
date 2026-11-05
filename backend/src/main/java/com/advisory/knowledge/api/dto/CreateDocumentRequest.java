@@ -11,22 +11,22 @@ import jakarta.validation.constraints.Size;
  * <p>以 {@code objectKey} 幂等：重复调用返回已存在的文档，不会产生重复行。</p>
  */
 public record CreateDocumentRequest(
-        @NotNull(message = "must not be null")
+        @NotNull(message = "不能为空")
         Long kbId,
 
         Long nodeId,
 
-        @NotBlank(message = "must not be blank")
-        @Size(max = 512, message = "must not exceed 512 characters")
+        @NotBlank(message = "不能为空")
+        @Size(max = 512, message = "长度不能超过 512 个字符")
         String filename,
 
-        @NotBlank(message = "must not be blank")
-        @Size(max = 1024, message = "must not exceed 1024 characters")
+        @NotBlank(message = "不能为空")
+        @Size(max = 1024, message = "长度不能超过 1024 个字符")
         String objectKey,
 
-        @PositiveOrZero(message = "must be >= 0")
+        @PositiveOrZero(message = "不能小于 0")
         Long size,
 
-        @Size(max = 128, message = "must not exceed 128 characters")
+        @Size(max = 128, message = "长度不能超过 128 个字符")
         String checksum) {
 }

@@ -39,7 +39,7 @@ public class AgentVersionRepository {
             jdbc.update("INSERT INTO agent_versions (agent_id, version, snapshot) VALUES (?, ?, ?::jsonb)",
                     agentId, version, objectMapper.writeValueAsString(snapshot));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("Agent snapshot cannot be serialized", e);
+            throw new IllegalStateException("Agent 快照无法序列化", e);
         }
     }
 
@@ -76,7 +76,7 @@ public class AgentVersionRepository {
         try {
             return objectMapper.readValue(json, AgentSnapshot.class);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agent_versions.snapshot holds invalid JSON", e);
+            throw new IllegalStateException("agent_versions.snapshot 中存的不是合法 JSON", e);
         }
     }
 }

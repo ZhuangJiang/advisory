@@ -83,7 +83,7 @@ public class UserAdminController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<UserSummary> create(@Valid @RequestBody CreateUserRequest body) {
         if (userRepository.existsByUsername(body.username())) {
-            throw new AppException(ErrorCode.CONFLICT, "Username already exists");
+            throw new AppException(ErrorCode.CONFLICT, "用户名已存在");
         }
         User user = new User(body.username(), passwordEncoder.encode(body.password()), body.role());
         user.setEnabled(true);
@@ -102,12 +102,12 @@ public class UserAdminController {
     @PatchMapping("/{id}")
     public ApiResponse<UserSummary> patch(@PathVariable Long id, @RequestBody PatchUserRequest body) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "User not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在"));
 
         boolean resetPassword = body.password() != null;
         if (resetPassword) {
             if (body.password().isBlank()) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "Password must not be blank");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "密码不能为空");
             }
             user.setPasswordHash(passwordEncoder.encode(body.password()));
             user.setMustChangePassword(true);

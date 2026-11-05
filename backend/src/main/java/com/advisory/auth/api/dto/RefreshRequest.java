@@ -8,5 +8,5 @@ import jakarta.validation.constraints.NotBlank;
  * @param refreshToken 客户端持有的 refresh token 原文
  */
 public record RefreshRequest(
-        @NotBlank(message = "refreshToken must not be blank") String refreshToken) {
+        @NotBlank(message = "refresh token 不能为空") String refreshToken) {
 }

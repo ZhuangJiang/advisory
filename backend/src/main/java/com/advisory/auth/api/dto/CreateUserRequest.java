@@ -12,7 +12,7 @@ import jakarta.validation.constraints.NotNull;
  * @param role     平台角色
  */
 public record CreateUserRequest(
-        @NotBlank(message = "username must not be blank") String username,
-        @NotBlank(message = "password must not be blank") String password,
-        @NotNull(message = "role must not be null") UserRole role) {
+        @NotBlank(message = "用户名不能为空") String username,
+        @NotBlank(message = "密码不能为空") String password,
+        @NotNull(message = "必须指定角色") UserRole role) {
 }

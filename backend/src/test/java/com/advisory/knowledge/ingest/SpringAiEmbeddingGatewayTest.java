@@ -33,7 +33,7 @@ class SpringAiEmbeddingGatewayTest {
         AppException exception = assertThrows(AppException.class,
                 () -> gateway.embed(7L, List.of("a", "b", "c")));
         assertEquals(ErrorCode.EMBEDDING_DIMENSION_MISMATCH, exception.getCode());
-        assertTrue(exception.getMessage().contains("dimension"),
+        assertTrue(exception.getMessage().contains("维度"),
                 "message must mention the dimension: " + exception.getMessage());
     }
 

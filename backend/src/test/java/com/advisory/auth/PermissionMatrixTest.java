@@ -70,7 +70,7 @@ class PermissionMatrixTest extends IntegrationTestBase {
         mockMvc.perform(get("/api/knowledge-bases"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(40100))
-                .andExpect(jsonPath("$.message").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("未登录或登录已过期"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 

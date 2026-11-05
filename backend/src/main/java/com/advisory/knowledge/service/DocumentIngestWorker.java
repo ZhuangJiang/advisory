@@ -388,7 +388,7 @@ public class DocumentIngestWorker implements ApplicationRunner {
                 """, documentId);
         if (rows.isEmpty()) {
             // 与物理删除撞上了：当作文档已消失处理即可。
-            throw new IllegalStateException("document row vanished mid-ingest");
+            throw new IllegalStateException("入库过程中文档行消失了");
         }
         Map<String, Object> row = rows.get(0);
         return new IngestRow(

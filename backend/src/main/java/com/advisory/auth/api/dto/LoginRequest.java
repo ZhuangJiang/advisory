@@ -9,6 +9,6 @@ import jakarta.validation.constraints.NotBlank;
  * @param password 明文密码，仅用于与库中哈希比对
  */
 public record LoginRequest(
-        @NotBlank(message = "username must not be blank") String username,
-        @NotBlank(message = "password must not be blank") String password) {
+        @NotBlank(message = "用户名不能为空") String username,
+        @NotBlank(message = "密码不能为空") String password) {
 }

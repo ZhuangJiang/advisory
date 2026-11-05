@@ -12,7 +12,7 @@ import jakarta.validation.constraints.Size;
  * {@code CHAT} 必须不填 {@code dimension}，因为对话模型没有维度概念。</p>
  */
 public record CreateModelRequest(
-        @NotBlank(message = "modelName must not be blank") @Size(max = 255) String modelName,
-        @NotNull(message = "capability must not be null") ModelCapability capability,
+        @NotBlank(message = "模型名称不能为空") @Size(max = 255) String modelName,
+        @NotNull(message = "必须指定模型类型") ModelCapability capability,
         Integer dimension) {
 }

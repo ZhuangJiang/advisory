@@ -68,7 +68,7 @@ public class RefreshTokenService {
             byte[] out = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(out);
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
+            throw new IllegalStateException("SHA-256 不可用", e);
         }
     }
 }

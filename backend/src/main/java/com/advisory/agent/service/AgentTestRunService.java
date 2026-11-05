@@ -42,17 +42,17 @@ public class AgentTestRunService {
     public AgentTestRunResponse run(Long agentId, String question, Integer version) {
         String trimmed = question == null ? "" : question.trim();
         if (trimmed.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "question must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "问题不能为空");
         }
         if (trimmed.length() > MAX_QUESTION_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "question must not exceed " + MAX_QUESTION_LENGTH + " characters");
+                    "问题长度不能超过 " + MAX_QUESTION_LENGTH + " 个字符");
         }
         if (version != null && version < 1) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "version must be a positive integer");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "版本号必须是正整数");
         }
         Agent agent = agents.findById(agentId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Agent 不存在"));
         int resolvedVersion = version == null ? agent.currentVersion() : version;
         AgentSnapshot snapshot = agentService.resolveSnapshot(agentId, resolvedVersion);
 

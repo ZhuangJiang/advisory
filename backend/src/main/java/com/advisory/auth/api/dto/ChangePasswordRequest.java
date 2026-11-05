@@ -11,6 +11,6 @@ import jakarta.validation.constraints.NotBlank;
  * @param newPassword 新密码，不得与旧密码相同
  */
 public record ChangePasswordRequest(
-        @NotBlank(message = "oldPassword must not be blank") String oldPassword,
-        @NotBlank(message = "newPassword must not be blank") String newPassword) {
+        @NotBlank(message = "原密码不能为空") String oldPassword,
+        @NotBlank(message = "新密码不能为空") String newPassword) {
 }

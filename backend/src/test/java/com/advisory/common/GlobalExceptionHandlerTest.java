@@ -64,7 +64,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/api/_test/missing"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(40400))
-                .andExpect(jsonPath("$.message").value("Resource not found"))
+                .andExpect(jsonPath("$.message").value("资源不存在"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -75,7 +75,7 @@ class GlobalExceptionHandlerTest {
                         .content("{not-json"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000))
-                .andExpect(jsonPath("$.message").value("Malformed request body"))
+                .andExpect(jsonPath("$.message").value("请求体格式错误"))
                 .andExpect(content().string(not(containsString("not-json"))))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
@@ -85,7 +85,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/api/_test/page").param("page", "abc"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000))
-                .andExpect(jsonPath("$.message").value("Invalid request parameter"))
+                .andExpect(jsonPath("$.message").value("请求参数不合法"))
                 .andExpect(content().string(not(containsString("abc"))))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
@@ -95,7 +95,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/api/_test/required").param("name", ""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000))
-                .andExpect(jsonPath("$.message").value("Validation failed"))
+                .andExpect(jsonPath("$.message").value("参数校验失败"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -104,7 +104,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(delete("/api/_test/not-found"))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(jsonPath("$.code").value(40000))
-                .andExpect(jsonPath("$.message", is("Method not allowed")))
+                .andExpect(jsonPath("$.message", is("请求方法不被支持")))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 }

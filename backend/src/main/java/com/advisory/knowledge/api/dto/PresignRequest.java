@@ -12,15 +12,15 @@ import jakarta.validation.constraints.Size;
  * 上限校验，避免客户端把明显超限的文件传上来才发现。</p>
  */
 public record PresignRequest(
-        @NotNull(message = "must not be null")
+        @NotNull(message = "不能为空")
         Long kbId,
 
         Long nodeId,
 
-        @NotBlank(message = "must not be blank")
-        @Size(max = 512, message = "must not exceed 512 characters")
+        @NotBlank(message = "不能为空")
+        @Size(max = 512, message = "长度不能超过 512 个字符")
         String filename,
 
-        @PositiveOrZero(message = "must be >= 0")
+        @PositiveOrZero(message = "不能小于 0")
         Long size) {
 }

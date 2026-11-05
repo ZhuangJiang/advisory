@@ -11,8 +11,8 @@ import jakarta.validation.constraints.Size;
  * <p>{@code apiKey} 可选，落库前会先加密；内网无需鉴权的 Ollama 可以不填。</p>
  */
 public record CreateProviderRequest(
-        @NotBlank(message = "name must not be blank") @Size(max = 128) String name,
-        @NotNull(message = "type must not be null") ProviderType type,
-        @NotBlank(message = "baseUrl must not be blank") @Size(max = 512) String baseUrl,
+        @NotBlank(message = "名称不能为空") @Size(max = 128) String name,
+        @NotNull(message = "必须指定提供商类型") ProviderType type,
+        @NotBlank(message = "接口地址不能为空") @Size(max = 512) String baseUrl,
         String apiKey) {
 }

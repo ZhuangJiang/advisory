@@ -219,7 +219,7 @@ public class AgentRepository {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("Agent JSON column cannot be serialized", e);
+            throw new IllegalStateException("Agent 的 JSON 字段无法序列化", e);
         }
     }
 
@@ -230,7 +230,7 @@ public class AgentRepository {
         try {
             return objectMapper.readValue(json, LONG_LIST);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agents.kb_ids holds invalid JSON", e);
+            throw new IllegalStateException("agents.kb_ids 中存的不是合法 JSON", e);
         }
     }
 
@@ -241,7 +241,7 @@ public class AgentRepository {
         try {
             return objectMapper.readValue(json, NODE_SCOPE);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("agents.node_scope holds invalid JSON", e);
+            throw new IllegalStateException("agents.node_scope 中存的不是合法 JSON", e);
         }
     }
 

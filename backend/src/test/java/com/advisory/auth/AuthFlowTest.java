@@ -99,7 +99,7 @@ class AuthFlowTest extends IntegrationTestBase {
                         .content(loginBody(username, "definitely-not-the-password")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(40100))
-                .andExpect(jsonPath("$.message", is("Invalid username or password")))
+                .andExpect(jsonPath("$.message", is("用户名或密码错误")))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 

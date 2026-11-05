@@ -13,7 +13,7 @@ import jakarta.validation.constraints.NotBlank;
  * @param chunkConfig      切片参数 JSON，省略时取默认值
  */
 public record CreateKnowledgeBaseRequest(
-        @NotBlank(message = "name must not be blank") String name,
+        @NotBlank(message = "名称不能为空") String name,
         String description,
         Long embeddingModelId,
         String chunkConfig) {

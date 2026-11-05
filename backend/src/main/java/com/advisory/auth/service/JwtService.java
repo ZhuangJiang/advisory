@@ -37,7 +37,7 @@ public class JwtService {
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
         if (bytes.length < 32) {
             throw new IllegalStateException(
-                    "app.jwt.secret must be at least 32 bytes for HS256; got " + bytes.length);
+                    "app.jwt.secret 用于 HS256 时至少需要 32 字节，实际为 " + bytes.length);
         }
         this.key = Keys.hmacShaKeyFor(bytes);
         this.accessTtl = accessTtl;
@@ -76,7 +76,7 @@ public class JwtService {
         Long id = Long.valueOf(claims.getSubject());
         String roleName = claims.get("role", String.class);
         if (roleName == null) {
-            throw new IllegalArgumentException("JWT is missing the 'role' claim");
+            throw new IllegalArgumentException("JWT 中缺少 'role' 声明");
         }
         UserRole role = UserRole.valueOf(roleName);
         boolean mustChangePassword = Boolean.TRUE.equals(claims.get("mustChangePassword", Boolean.class));

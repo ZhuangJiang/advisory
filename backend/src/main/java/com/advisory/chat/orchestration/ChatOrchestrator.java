@@ -101,7 +101,7 @@ public class ChatOrchestrator {
     public OrchestrationResult run(AgentSnapshot agent, String question, StepSink sink) {
         Objects.requireNonNull(agent, "agent");
         if (question == null || question.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "question must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "问题不能为空");
         }
         StepSink events = sink == null ? StepSink.NOOP : sink;
         String trimmedQuestion = question.trim();
@@ -279,7 +279,7 @@ public class ChatOrchestrator {
             if (cause instanceof RuntimeException runtime) {
                 throw runtime;
             }
-            throw new IllegalStateException("Orchestration step failed", cause);
+            throw new IllegalStateException("编排步骤执行失败", cause);
         }
     }
 

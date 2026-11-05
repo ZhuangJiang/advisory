@@ -39,7 +39,7 @@ public enum DocumentStatus {
         try {
             return DocumentStatus.valueOf(raw);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("Unknown document status in database: " + raw, e);
+            throw new IllegalStateException("数据库中出现了未知的文档状态：" + raw, e);
         }
     }
 }

@@ -33,7 +33,7 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /** 500 响应对外的固定文案，任何内部异常都不向客户端透传细节。 */
-    private static final String INTERNAL_ERROR_MESSAGE = "Internal server error";
+    private static final String INTERNAL_ERROR_MESSAGE = "服务器内部错误";
 
     /**
      * 业务异常：错误码与 HTTP 状态均取自 {@link ErrorCode}。
@@ -70,7 +70,7 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .collect(Collectors.joining("; "));
         if (message.isBlank()) {
-            message = "Validation failed";
+            message = "参数校验失败";
         }
         log.warn("参数校验失败 {}: {}", describe(request), message);
         return validationError(message);
@@ -87,7 +87,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleHandlerMethodValidation(HandlerMethodValidationException ex,
                                                                           HttpServletRequest request) {
         log.warn("方法参数校验失败 {}", describe(request));
-        return validationError("Validation failed");
+        return validationError("参数校验失败");
     }
 
     /**
@@ -101,7 +101,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex,
                                                                HttpServletRequest request) {
         log.warn("请求参数类型不匹配 {}: {}={}", describe(request), ex.getName(), ex.getValue());
-        return validationError("Invalid request parameter");
+        return validationError("请求参数不合法");
     }
 
     /**
@@ -115,7 +115,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleUnreadableBody(HttpMessageNotReadableException ex,
                                                                  HttpServletRequest request) {
         log.warn("请求体无法解析 {} ({})", describe(request), ex.getClass().getSimpleName());
-        return validationError("Malformed request body");
+        return validationError("请求体格式错误");
     }
 
     /**
@@ -130,7 +130,7 @@ public class GlobalExceptionHandler {
                                                              HttpServletRequest request) {
         log.warn("路径不存在 {}: {}", describe(request), ex.getResourcePath());
         return ResponseEntity.status(ErrorCode.RESOURCE_NOT_FOUND.getHttpStatus())
-                .body(ApiResponse.error(ErrorCode.RESOURCE_NOT_FOUND, "Resource not found"));
+                .body(ApiResponse.error(ErrorCode.RESOURCE_NOT_FOUND, "资源不存在"));
     }
 
     /**
@@ -145,7 +145,7 @@ public class GlobalExceptionHandler {
                                                                    HttpServletRequest request) {
         log.warn("HTTP 方法不被支持 {}: {}", describe(request), ex.getMethod());
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .body(ApiResponse.error(ErrorCode.VALIDATION_FAILED, "Method not allowed"));
+                .body(ApiResponse.error(ErrorCode.VALIDATION_FAILED, "请求方法不被支持"));
     }
 
     /**
@@ -163,7 +163,7 @@ public class GlobalExceptionHandler {
                                                                HttpServletRequest request) {
         log.warn("权限不足 {}: {}", describe(request), ex.getMessage());
         return ResponseEntity.status(ErrorCode.FORBIDDEN.getHttpStatus())
-                .body(ApiResponse.error(ErrorCode.FORBIDDEN, "Forbidden"));
+                .body(ApiResponse.error(ErrorCode.FORBIDDEN, "没有访问权限"));
     }
 
     /**
@@ -178,7 +178,7 @@ public class GlobalExceptionHandler {
                                                                  HttpServletRequest request) {
         log.warn("认证失败 {}: {}", describe(request), ex.getMessage());
         return ResponseEntity.status(ErrorCode.UNAUTHORIZED.getHttpStatus())
-                .body(ApiResponse.error(ErrorCode.UNAUTHORIZED, "Unauthorized"));
+                .body(ApiResponse.error(ErrorCode.UNAUTHORIZED, "未登录或登录已过期"));
     }
 
     /**

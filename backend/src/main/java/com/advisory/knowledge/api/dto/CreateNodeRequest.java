@@ -10,5 +10,5 @@ import jakarta.validation.constraints.NotBlank;
  */
 public record CreateNodeRequest(
         Long parentId,
-        @NotBlank(message = "name must not be blank") String name) {
+        @NotBlank(message = "名称不能为空") String name) {
 }

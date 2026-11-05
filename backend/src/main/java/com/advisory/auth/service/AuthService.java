@@ -60,7 +60,7 @@ public class AuthService {
         User user = userRepository.findByUsername(username)
                 .filter(User::isEnabled)
                 .filter(u -> passwordEncoder.matches(password, u.getPasswordHash()))
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "Invalid username or password"));
+                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "用户名或密码错误"));
         return issuePair(user);
     }
 
@@ -78,16 +78,16 @@ public class AuthService {
         RefreshToken stored = refreshTokenRepository.findByTokenHash(refreshTokenService.hash(rawToken))
                 .filter(t -> t.getRevokedAt() == null)
                 .filter(t -> t.getExpiresAt().isAfter(Instant.now()))
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "Invalid or expired refresh token"));
+                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "refresh token 无效或已过期"));
 
         Long userId = stored.getUserId();
         User user = userRepository.findById(userId)
                 .filter(User::isEnabled)
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "User is disabled"));
+                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "用户已被禁用"));
 
         int revoked = refreshTokenRepository.revokeIfActive(stored.getId(), Instant.now());
         if (revoked == 0) {
-            throw new AppException(ErrorCode.UNAUTHORIZED, "Refresh token already used");
+            throw new AppException(ErrorCode.UNAUTHORIZED, "refresh token 已被使用");
         }
         return issuePair(user);
     }
@@ -118,13 +118,13 @@ public class AuthService {
     @Transactional
     public TokenPair changePassword(Long userId, String oldPassword, String newPassword) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "Unauthorized"));
+                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "未登录或登录已过期"));
 
         if (!passwordEncoder.matches(oldPassword, user.getPasswordHash())) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "Old password is incorrect");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "原密码不正确");
         }
         if (newPassword.equals(oldPassword)) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "New password must differ from old password");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "新密码不能与原密码相同");
         }
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));

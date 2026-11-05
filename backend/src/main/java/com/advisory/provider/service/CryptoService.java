@@ -50,11 +50,11 @@ public class CryptoService {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(encryptionKey.getBytes(StandardCharsets.UTF_8));
             if (digest.length != KEY_LENGTH_BYTES) {
-                throw new IllegalStateException("SHA-256 must produce a 32-byte key");
+                throw new IllegalStateException("SHA-256 必须产出 32 字节密钥");
             }
             this.key = new SecretKeySpec(digest, "AES");
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("JVM does not provide SHA-256", e);
+            throw new IllegalStateException("当前 JVM 不提供 SHA-256 算法", e);
         }
     }
 
@@ -79,7 +79,7 @@ public class CryptoService {
             System.arraycopy(ciphertext, 0, payload, iv.length, ciphertext.length);
             return Base64.getEncoder().encodeToString(payload);
         } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("AES-GCM encryption failed", e);
+            throw new IllegalStateException("AES-GCM 加密失败", e);
         }
     }
 
@@ -100,11 +100,11 @@ public class CryptoService {
         try {
             payload = Base64.getDecoder().decode(ciphertext);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Stored secret is not valid Base64", e);
+            throw new IllegalArgumentException("保存的密文不是合法的 Base64", e);
         }
         if (payload.length <= IV_LENGTH_BYTES + TAG_LENGTH_BYTES) {
             // 长度至少要有 iv + tag，再谈明文
-            throw new IllegalArgumentException("Stored secret is too short to be an AES-GCM payload");
+            throw new IllegalArgumentException("保存的密文长度不足，不是有效的 AES-GCM 载荷");
         }
         try {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
@@ -114,7 +114,7 @@ public class CryptoService {
                     payload.length - IV_LENGTH_BYTES);
             return new String(plaintext, StandardCharsets.UTF_8);
         } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("Stored secret failed AES-GCM authentication", e);
+            throw new IllegalStateException("保存的密文未通过 AES-GCM 认证", e);
         }
     }
 }

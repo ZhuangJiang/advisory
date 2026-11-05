@@ -101,7 +101,7 @@ public class ProviderController {
                                      @RequestParam(name = "remote", defaultValue = "false") boolean remote,
                                      CurrentUser user) {
         if (remote && user.role() != UserRole.ADMIN) {
-            throw new AppException(ErrorCode.FORBIDDEN, "remote probing requires the ADMIN role");
+            throw new AppException(ErrorCode.FORBIDDEN, "远程探测需要管理员权限");
         }
         if (remote) {
             return ApiResponse.ok(RemoteModelsResponse.from(service.remoteModels(id)));

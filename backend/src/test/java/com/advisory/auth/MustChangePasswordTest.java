@@ -57,7 +57,7 @@ class MustChangePasswordTest extends IntegrationTestBase {
         mockMvc.perform(get("/api/knowledge-bases").header(HttpHeaders.AUTHORIZATION, bearer))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40301))
-                .andExpect(jsonPath("$.message").value("Password change required"))
+                .andExpect(jsonPath("$.message").value("请先修改初始密码"))
                 .andExpect(jsonPath("$.data").doesNotExist());
 
         LoginResult changed = changePassword(bearer, INITIAL_PASSWORD, NEW_PASSWORD);

@@ -42,6 +42,6 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
         if (authentication != null && authentication.getPrincipal() instanceof CurrentUser currentUser) {
             return currentUser;
         }
-        throw new AppException(ErrorCode.UNAUTHORIZED, "Unauthorized");
+        throw new AppException(ErrorCode.UNAUTHORIZED, "未登录或登录已过期");
     }
 }

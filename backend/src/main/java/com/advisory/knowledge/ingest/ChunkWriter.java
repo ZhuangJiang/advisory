@@ -85,16 +85,14 @@ public class ChunkWriter {
             // 这是 worker 与 writer 之间的内部契约被破坏，不是提供商的问题：
             // 网关保证每个片段有且只有一个向量，数量对不上说明是我们自己的 bug。
             throw new AppException(ErrorCode.INTERNAL_ERROR,
-                    "Embedding count mismatch: " + chunks.size() + " chunk(s) but "
-                            + vectors.size() + " vector(s) for document " + documentId);
+                    "嵌入数量不匹配：文档 " + documentId + " 有 " + chunks.size() + " 个分块，但返回了 " + vectors.size() + " 个向量");
         }
         for (int i = 0; i < vectors.size(); i++) {
             float[] vector = vectors.get(i);
             if (vector == null || vector.length != dimension) {
                 int actual = vector == null ? 0 : vector.length;
                 throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
-                        "Embedding dimension mismatch: expected " + dimension + ", got " + actual
-                                + " (chunk seq " + chunks.get(i).seq() + " of document " + documentId + ")");
+                        "嵌入维度不匹配：期望 " + dimension + "，实际 " + actual + "（文档 " + documentId + " 的第 " + chunks.get(i).seq() + " 个分块）");
             }
         }
     }

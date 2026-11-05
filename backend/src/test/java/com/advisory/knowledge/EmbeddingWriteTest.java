@@ -145,7 +145,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         String errorMsg = jdbcTemplate.queryForObject(
                 "SELECT error_msg FROM documents WHERE id = ?", String.class, documentId);
         assertNotNull(errorMsg, "failure must carry an error message");
-        assertTrue(errorMsg.contains("dimension"), "error must mention the dimension, got: " + errorMsg);
+        assertTrue(errorMsg.contains("维度"), "error must mention the dimension, got: " + errorMsg);
 
         // DELETE 与批量 INSERT 在同一个事务里；既然在写之前就被校验拦下，
         // 预先写入的片段必须原封不动地还在那里。
@@ -282,7 +282,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
                 () -> embeddingClientFactory.forEmbedding(modelId));
 
         assertEquals(ErrorCode.EMBEDDING_DIMENSION_MISMATCH, exception.getCode());
-        assertTrue(exception.getMessage().contains("dimension"),
+        assertTrue(exception.getMessage().contains("维度"),
                 "message must mention the dimension, got: " + exception.getMessage());
     }
 

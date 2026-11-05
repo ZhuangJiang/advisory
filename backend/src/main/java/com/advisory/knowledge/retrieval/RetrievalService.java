@@ -127,12 +127,12 @@ public class RetrievalService {
 
     private static List<Long> validateAndDedupKbIds(RetrievalQuery query) {
         if (query.kbIds() == null || query.kbIds().isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "kbIds must not be empty");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "知识库 id 列表不能为空");
         }
         Set<Long> deduped = new LinkedHashSet<>();
         for (Long kbId : query.kbIds()) {
             if (kbId == null) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "kbIds must not contain null");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "知识库 id 列表不能包含 null");
             }
             deduped.add(kbId);
         }

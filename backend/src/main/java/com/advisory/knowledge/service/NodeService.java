@@ -50,13 +50,13 @@ public class NodeService {
     public KbNodeRow createNode(Long kbId, Long parentId, String name) {
         name = validateName(name);
         kbRepository.findById(kbId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在"));
 
         String parentPath = null;
         if (parentId != null) {
             KbNodeRow parent = find(parentId);
             if (!parent.kbId().equals(kbId)) {
-                throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Parent node not found in this knowledge base");
+                throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "该知识库下不存在父节点");
             }
             parentPath = parent.path();
         }
@@ -85,10 +85,10 @@ public class NodeService {
         } else {
             KbNodeRow parent = find(newParentId);
             if (!parent.kbId().equals(node.kbId())) {
-                throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Parent node not found in this knowledge base");
+                throw new AppException(ErrorCode.RESOURCE_NOT_FOUND, "该知识库下不存在父节点");
             }
             if (nodeJdbc.isDescendantOrSelf(parent.path(), oldPath)) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "Cannot move a node into its own subtree");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "不能把节点移动到它自己的子树中");
             }
             newNodePath = parent.path() + ".n" + nodeId;
         }
@@ -130,10 +130,10 @@ public class NodeService {
     public void deleteNode(Long nodeId) {
         find(nodeId);
         if (nodeJdbc.countByParentId(nodeId) > 0) {
-            throw new AppException(ErrorCode.NODE_NOT_EMPTY, "Node has children");
+            throw new AppException(ErrorCode.NODE_NOT_EMPTY, "节点下还有子节点");
         }
         if (nodeJdbc.countDocuments(nodeId) > 0) {
-            throw new AppException(ErrorCode.NODE_NOT_EMPTY, "Node has documents");
+            throw new AppException(ErrorCode.NODE_NOT_EMPTY, "节点下还有文档");
         }
         nodeRepository.deleteById(nodeId);
     }
@@ -142,7 +142,7 @@ public class NodeService {
     @Transactional(readOnly = true)
     public List<KbNodeRow> listNodes(Long kbId) {
         kbRepository.findById(kbId)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Knowledge base not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "知识库不存在"));
         return nodeJdbc.findByKbId(kbId);
     }
 
@@ -171,11 +171,11 @@ public class NodeService {
 
     private KbNodeRow find(Long id) {
         return nodeJdbc.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Node not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "节点不存在"));
     }
 
     private static AppException duplicateName() {
-        return new AppException(ErrorCode.KB_NODE_NAME_DUPLICATED, "A node with this name already exists");
+        return new AppException(ErrorCode.KB_NODE_NAME_DUPLICATED, "同一层级下已存在同名节点");
     }
 
     /**
@@ -210,18 +210,18 @@ public class NodeService {
 
     private static String validateName(String raw) {
         if (raw == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         String name = raw.trim();
         if (name.isEmpty()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         if (name.length() > MAX_NAME_LENGTH) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not exceed " + MAX_NAME_LENGTH + " characters");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称长度不能超过 " + MAX_NAME_LENGTH + " 个字符");
         }
         for (int i = 0; i < name.length(); i++) {
             if (Character.isISOControl(name.charAt(i))) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not contain control characters");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能包含控制字符");
             }
         }
         return name;

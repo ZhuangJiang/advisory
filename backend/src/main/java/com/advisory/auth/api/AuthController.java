@@ -83,7 +83,7 @@ public class AuthController {
     @GetMapping("/me")
     public ApiResponse<MeResponse> me(CurrentUser currentUser) {
         User user = userRepository.findById(currentUser.id())
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "Unauthorized"));
+                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHORIZED, "未登录或登录已过期"));
         return ApiResponse.ok(MeResponse.from(user));
     }
 

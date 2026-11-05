@@ -209,7 +209,7 @@ public class ProviderProbe {
         JsonNode array = root.path(ollama ? "models" : "data");
         if (!array.isArray()) {
             throw new IllegalArgumentException(
-                    "response has no " + (ollama ? "models" : "data") + " array");
+                    "响应里没有 " + (ollama ? "models" : "data") + " 数组");
         }
         String nameField = ollama ? "name" : "id";
         List<String> names = new ArrayList<>();

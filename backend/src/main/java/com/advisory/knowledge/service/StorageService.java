@@ -68,7 +68,7 @@ public class StorageService {
                     .expiry(expirySeconds)
                     .build());
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to presign " + method + " for " + objectKey, e);
+            throw new IllegalStateException("为 " + objectKey + " 生成 " + method + " 预签名地址失败", e);
         }
     }
 
@@ -80,7 +80,7 @@ public class StorageService {
                     .object(objectKey)
                     .build());
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to read object " + objectKey, e);
+            throw new IllegalStateException("读取对象 " + objectKey + " 失败", e);
         }
     }
 
@@ -95,7 +95,7 @@ public class StorageService {
                     .contentType("text/plain; charset=utf-8")
                     .build());
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to write object " + objectKey, e);
+            throw new IllegalStateException("写入对象 " + objectKey + " 失败", e);
         }
     }
 
@@ -107,7 +107,7 @@ public class StorageService {
                     .object(objectKey)
                     .build());
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to remove object " + objectKey, e);
+            throw new IllegalStateException("删除对象 " + objectKey + " 失败", e);
         }
     }
 
@@ -130,9 +130,9 @@ public class StorageService {
             if ("NoSuchKey".equals(code) || "NoSuchBucket".equals(code)) {
                 return Optional.empty();
             }
-            throw new IllegalStateException("Failed to stat object " + objectKey, e);
+            throw new IllegalStateException("查询对象 " + objectKey + " 元信息失败", e);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to stat object " + objectKey, e);
+            throw new IllegalStateException("查询对象 " + objectKey + " 元信息失败", e);
         }
     }
 

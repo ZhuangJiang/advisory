@@ -86,7 +86,7 @@ public class AuditQueryService {
     public AuditConversationDetail detail(long conversationId, CurrentUser actor) {
         AuditConversationRow row = repository.findRow(conversationId)
                 .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND,
-                        "Conversation not found"));
+                        "会话不存在"));
         String actorName = repository.findUsername(actor.id()).orElse("unknown");
         log.info("adminAudit actor={} (id={}) conversationId={} ownerId={}",
                 actorName, actor.id(), conversationId, row.userId());
@@ -129,7 +129,7 @@ public class AuditQueryService {
             return LocalDateTime.parse(value).atZone(ZoneId.systemDefault()).toInstant();
         } catch (DateTimeParseException e) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "from/to must be an ISO-8601 date or date-time, got '" + value + "'");
+                    "from/to 必须是 ISO-8601 日期或日期时间，实际为 '" + value + "'");
         }
     }
 }

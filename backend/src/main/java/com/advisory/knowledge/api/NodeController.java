@@ -59,14 +59,14 @@ public class NodeController {
     @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<NodeResponse> patch(@PathVariable Long id, @RequestBody JsonNode body) {
         if (!body.isObject()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "Request body must be a JSON object");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "请求体必须是 JSON 对象");
         }
 
         String name = null;
         if (body.has("name")) {
             JsonNode nameNode = body.get("name");
             if (!nameNode.isTextual()) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "name must be a string");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "name 必须是字符串");
             }
             name = nameNode.textValue();
         }
@@ -77,7 +77,7 @@ public class NodeController {
             JsonNode parentNode = body.get("parentId");
             if (!parentNode.isNull()) {
                 if (!parentNode.isIntegralNumber() || !parentNode.canConvertToLong()) {
-                    throw new AppException(ErrorCode.VALIDATION_FAILED, "parentId must be a number or null");
+                    throw new AppException(ErrorCode.VALIDATION_FAILED, "parentId 必须是数字或 null");
                 }
                 parentId = parentNode.longValue();
             }

@@ -193,7 +193,7 @@ public class ProviderService {
                 provider.getId(), provider.getId(), provider.getId());
         if (references != null && references > 0) {
             throw new AppException(ErrorCode.MODEL_IN_USE,
-                    "Provider has models referenced by a knowledge base or an agent");
+                    "该提供商下的模型正被知识库或 Agent 引用");
         }
         // 其下模型由 models.provider_id 上的 ON DELETE CASCADE 连带删除
         providers.delete(provider);
@@ -262,7 +262,7 @@ public class ProviderService {
         Long references = jdbc.queryForObject(MODEL_REFERENCE_SQL, Long.class, id, id, id);
         if (references != null && references > 0) {
             throw new AppException(ErrorCode.MODEL_IN_USE,
-                    "Model is referenced by a knowledge base or an agent");
+                    "该模型正被知识库或 Agent 引用");
         }
         models.delete(model);
     }
@@ -289,7 +289,7 @@ public class ProviderService {
                     ? ErrorCode.RESOURCE_NOT_FOUND
                     : ErrorCode.VALIDATION_FAILED;
             throw new AppException(errorCode,
-                    "Provider probe failed: " + probeResult.errorCode());
+                    "提供商探测失败：" + probeResult.errorCode());
         }
 
         // 先校验全部请求行再动表：只要有一行的向量维度不合法，表必须保持原样，不能留下半截导入。
@@ -297,7 +297,7 @@ public class ProviderService {
         List<ImportModelSpec> specs = body.models() == null ? List.of() : body.models();
         for (ImportModelSpec spec : specs) {
             if (spec == null) {
-                throw new AppException(ErrorCode.VALIDATION_FAILED, "models entries must not be null");
+                throw new AppException(ErrorCode.VALIDATION_FAILED, "模型列表不能包含 null");
             }
             String modelName = validateModelName(spec.modelName());
             validateDimension(spec.capability(), spec.dimension());
@@ -365,12 +365,11 @@ public class ProviderService {
         if (capability == ModelCapability.EMBEDDING) {
             if (dimension == null || dimension != expectedDimension) {
                 throw new AppException(ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
-                        "EMBEDDING model dimension must be " + expectedDimension
-                                + ", got " + dimension);
+                        "嵌入模型的维度必须是 " + expectedDimension + "，实际为 " + dimension);
             }
         } else if (dimension != null) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "CHAT model must not specify a dimension");
+                    "CHAT 类型的模型不能指定维度");
         }
     }
 
@@ -385,52 +384,52 @@ public class ProviderService {
                         || !excludingModelId.equals(candidate.getId()));
         if (duplicate) {
             throw new AppException(ErrorCode.CONFLICT,
-                    "A model named '" + modelName + "' already exists for this provider");
+                    "该提供商下已存在名为 '" + modelName + "' 的模型");
         }
     }
 
     private ModelProvider find(Long id) {
         return providers.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Provider not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "提供商不存在"));
     }
 
     private ModelConfig findModel(Long id) {
         return models.findById(id)
-                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Model not found"));
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "模型不存在"));
     }
 
     private static String validateName(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "name must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "名称不能为空");
         }
         String name = raw.trim();
         if (name.length() > MAX_NAME_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "name must not exceed " + MAX_NAME_LENGTH + " characters");
+                    "名称长度不能超过 " + MAX_NAME_LENGTH + " 个字符");
         }
         return name;
     }
 
     private static String validateBaseUrl(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "baseUrl must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "接口地址不能为空");
         }
         String baseUrl = raw.trim();
         if (baseUrl.length() > MAX_URL_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "baseUrl must not exceed " + MAX_URL_LENGTH + " characters");
+                    "接口地址长度不能超过 " + MAX_URL_LENGTH + " 个字符");
         }
         return baseUrl;
     }
 
     private static String validateModelName(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "modelName must not be blank");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "模型名称不能为空");
         }
         String modelName = raw.trim();
         if (modelName.length() > MAX_MODEL_NAME_LENGTH) {
             throw new AppException(ErrorCode.VALIDATION_FAILED,
-                    "modelName must not exceed " + MAX_MODEL_NAME_LENGTH + " characters");
+                    "模型名称长度不能超过 " + MAX_MODEL_NAME_LENGTH + " 个字符");
         }
         return modelName;
     }

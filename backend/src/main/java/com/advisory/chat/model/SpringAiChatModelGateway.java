@@ -67,7 +67,7 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
         try {
             T value = converter.convert(raw);
             if (value == null) {
-                throw new IllegalStateException("empty structured output");
+                throw new IllegalStateException("模型返回的结构化内容为空");
             }
             return value;
         } catch (RuntimeException e) {
@@ -81,7 +81,7 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
     private String complete(Long modelId, BigDecimal temperature, String systemPrompt,
                             String userPrompt) {
         if (modelId == null) {
-            throw new AppException(ErrorCode.VALIDATION_FAILED, "chat model id is required");
+            throw new AppException(ErrorCode.VALIDATION_FAILED, "必须指定对话模型");
         }
         ChatClientFactory.ChatClient client = clientFactory.forChat(modelId, temperature);
         ChatModel model = client.model();

@@ -13,13 +13,13 @@ public record ChunkConfig(int minChars, int maxChars, double overlapRatio) {
 
     public ChunkConfig {
         if (minChars <= 0) {
-            throw new IllegalArgumentException("minChars must be positive");
+            throw new IllegalArgumentException("minChars 必须为正数");
         }
         if (maxChars < minChars) {
-            throw new IllegalArgumentException("maxChars must be >= minChars");
+            throw new IllegalArgumentException("maxChars 不能小于 minChars");
         }
         if (overlapRatio < 0 || overlapRatio >= 1) {
-            throw new IllegalArgumentException("overlapRatio must be in [0, 1)");
+            throw new IllegalArgumentException("overlapRatio 必须落在 [0, 1) 区间");
         }
     }
 }

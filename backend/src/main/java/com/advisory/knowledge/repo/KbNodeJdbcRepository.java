@@ -88,7 +88,7 @@ public class KbNodeJdbcRepository {
 
         Number key = keyHolder.getKey();
         if (key == null) {
-            throw new IllegalStateException("Insert did not return a generated key");
+            throw new IllegalStateException("插入后没有取到自增主键");
         }
         long id = key.longValue();
 
