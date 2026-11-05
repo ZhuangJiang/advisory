@@ -5,7 +5,7 @@ Vue 3 + Vite + TypeScript 的 SPA，生产由 nginx 托管并反代 `/api`。后
 - Vue 3.5（`<script setup>` + Composition API）、Vue Router 4、Pinia 2
 - Element Plus 2（中文 locale 在 `main.ts` 统一注入）
 - `@microsoft/fetch-event-source` 消费 SSE
-- 测试：Vitest + jsdom + `@vue/test-utils`，**47 用例**
+- 测试：Vitest + jsdom + `@vue/test-utils`，**59 用例**
 
 ---
 
@@ -127,7 +127,7 @@ token 存 `localStorage`（键 `advisory.accessToken` / `advisory.refreshToken`�
 ```
 meta       {messageId, conversationId}   首帧，断线重连的句柄
 step       {round, phase, status, summary}      phase ∈ PLAN|RETRIEVE|REFLECT|ANSWER
-delta      {phase, text}                 答案增量
+delta      {phase, text}                 增量：phase=ANSWER 是答案正文，PLAN/REFLECT 是该步骤的 JSON 载荷
 citations  {items: [{chunkId, documentId, docName, nodeName, snippet, score}]}
 done       {messageId, status, tokenUsage, latencyMs}   终结
 error      {code, message, recoverable}  终结
@@ -135,6 +135,9 @@ ping       {}                            每 15s，前端忽略
 ```
 
 解析器必须容忍**一帧被拆到多个网络 chunk**，也要容忍一次 chunk 里有多帧——这正是它按字节测的原因。
+
+**`delta` 不是单一含义**：只有 `phase=ANSWER` 才能拼进答案正文。`PLAN` / `REFLECT` 推的是该步骤的结构化载荷（JSON 字符串），store 把它挂到对应步骤上，由 `utils/reasoning.ts` 解析成「检索查询 / 证据缺口」。早期版本一视同仁地拼接，界面上就表现为「答案开头压着一大段 `{"queries":…}`」。
+
 
 ### 断线恢复
 
@@ -219,8 +222,8 @@ ping       {}                            每 15s，前端忽略
 | `NodeTree` | 节点树，拖拽/重命名/删除；同级重名由后端 40901 拒绝 |
 | `DocumentTable` | 文档列表、状态轮询（含排队位次）、多文件上传、单篇/批量重新裁切、重试、分块预览入口 |
 | `ChunkDrawer` | 文档分块抽屉 |
-| `MessageBubble` | 消息正文，`[n]` 渲染成可点上标 |
-| `ReasoningPanel` | 按 round 分组的推理步骤，实时流与持久化记录共用 |
+| `MessageBubble` | 消息正文，Markdown 渲染（`utils/markdown.ts`）+ `[n]` 可点上标（事件委托） |
+| `ReasoningPanel` | 按 round 分组、可逐轮折叠的推理步骤；每步可展开 `payload` 解析出的结构化详情；实时流与持久化记录共用 |
 | `CitationDrawer` | 引用详情：文档名、节点路径、相关度、片段全文 |
 | `KbScopePicker` | 选知识库 + 限定节点范围 |
 | `AgentTestDrawer` | 试运行结果（不落库，纯展示） |
@@ -252,7 +255,9 @@ npm --prefix frontend run test
 | `sse.spec.ts` | 字节级分帧、跨 chunk 拆分、`ping` 忽略、终结帧 |
 | `auth.spec.ts` | 登录、401 刷新一次、刷新失败清会话 |
 | `router.spec.ts` | 守卫：未登录、强制改密、角色不足 |
-| `chat-view.spec.ts` | 消息流、推理步骤按 round 分组、`[n]` 上标 |
+| `chat-view.spec.ts` | 消息流、推理步骤按 round 分组、`[n]` 上标、`delta` 按 phase 分流 |
+| `markdown.spec.ts` | 标题/列表/表格渲染、引用角标只认真实编号、HTML 消毒 |
+| `reasoning-panel.spec.ts` | 默认只展开最后一轮、逐轮/全部折叠、详情仅在展开时渲染 |
 | `knowledge.spec.ts` | 列表/详情、上传三步、多文件串行上传与失败续传、重新裁切接口 |
 | `document-table.spec.ts` | 排队位次渲染、批量重新裁切的选中态与请求、单篇重新裁切、多选文件 |
 | `node-tree.spec.ts` | 树的增删改与重名报错 |

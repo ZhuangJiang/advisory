@@ -36,6 +36,12 @@ export interface ReasoningStepView {
   status: 'started' | 'finished'
   summary: string | null
   latencyMs: number | null
+  /**
+   * 后端落库的 JSON 载荷（PLAN/RETRIEVE/REFLECT/ANSWER 各一种形状），由
+   * `utils/reasoning.ts#parseStepDetail` 解析成可读结构。实时运行时 PLAN/REFLECT 的载荷来自
+   * `delta` 帧，其余阶段只有落库后才有。
+   */
+  payload?: string | null
 }
 
 export interface ChatMessage {
@@ -70,7 +76,8 @@ function fromDetail(detail: MessageDetail): Omit<ChatMessage, 'key' | 'id' | 'ro
       phase: step.phase,
       status: 'finished' as const,
       summary: step.summary,
-      latencyMs: step.latencyMs
+      latencyMs: step.latencyMs,
+      payload: step.payload
     })),
     detailLoaded: true,
     tokenUsage: detail.tokenUsage,
@@ -135,9 +142,27 @@ export const useChatStore = defineStore('chat', () => {
       existing.status = incoming.status
       existing.summary = incoming.summary ?? existing.summary
       existing.latencyMs = incoming.latencyMs ?? existing.latencyMs
+      existing.payload = incoming.payload ?? existing.payload
       return
     }
     message.steps.push({ ...incoming })
+  }
+
+  /**
+   * PLAN / REFLECT 阶段推下来的 `delta` 不是答案正文，而是该步骤的结构化载荷（JSON 字符串）。
+   *
+   * <p>它们紧跟在同一步骤的 `step(finished)` 帧之后到达，但帧里没有轮次，所以挂到「最近一个同阶段
+   * 步骤」上；找不到才按当前最后一轮的轮次补一条。</p>
+   */
+  function attachPayload(message: ChatMessage, phase: Phase, text: string): void {
+    for (let i = message.steps.length - 1; i >= 0; i -= 1) {
+      if (message.steps[i].phase === phase) {
+        message.steps[i].payload = text
+        return
+      }
+    }
+    const round = message.steps.length > 0 ? message.steps[message.steps.length - 1].round : 1
+    message.steps.push({ round, phase, status: 'finished', summary: null, latencyMs: null, payload: text })
   }
 
   async function loadConversations(): Promise<void> {
@@ -259,8 +284,14 @@ export const useChatStore = defineStore('chat', () => {
         })
       },
       onDelta(delta) {
-        target.content += delta.text
-        target.status = 'STREAMING'
+        // 只有 ANSWER 阶段的增量属于答案正文。PLAN / REFLECT 也走同一条 delta 通道，但推的是
+        // JSON 载荷——以前一视同仁地拼进正文，界面上就出现「答案开头压着一大段 queries JSON」。
+        if (delta.phase === 'ANSWER') {
+          target.content += delta.text
+          target.status = 'STREAMING'
+          return
+        }
+        attachPayload(target, delta.phase as Phase, delta.text)
       },
       onCitations(payload) {
         target.citations = payload.items.map((item) => ({

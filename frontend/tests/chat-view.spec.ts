@@ -319,4 +319,37 @@ describe('chat store', () => {
     expect(assistant.citations).toHaveLength(1)
     expect(store.streaming).toBe(false)
   })
+
+  it('keeps PLAN and REFLECT deltas out of the answer body and on their steps', async () => {
+    const chat = await import('../src/api/chat')
+    const planPayload = JSON.stringify({ queries: ['报销材料', '审批流程'] })
+    const reflectPayload = JSON.stringify({ sufficient: false, gaps: ['缺少审批单证据'], nextQueries: ['审批单'] })
+    vi.mocked(chat.ask).mockImplementation((_id, _content, handlers) => {
+      handlers.onMeta?.({ messageId: 43, conversationId: 11 })
+      handlers.onStep?.({ round: 1, phase: 'PLAN', status: 'started' })
+      handlers.onStep?.({ round: 1, phase: 'PLAN', status: 'finished', summary: '生成 2 条检索查询' })
+      handlers.onDelta?.({ phase: 'PLAN', text: planPayload })
+      handlers.onStep?.({ round: 1, phase: 'RETRIEVE', status: 'finished', summary: '召回 3 个片段（累计 3）' })
+      handlers.onStep?.({ round: 1, phase: 'REFLECT', status: 'finished', summary: '证据不足（缺口 1 项）' })
+      handlers.onDelta?.({ phase: 'REFLECT', text: reflectPayload })
+      handlers.onStep?.({ round: 1, phase: 'ANSWER', status: 'started' })
+      handlers.onDelta?.({ phase: 'ANSWER', text: '需要发票原件[1]。' })
+      handlers.onDone?.({ messageId: 43, status: 'COMPLETED', latencyMs: 900 })
+      return new AbortController()
+    })
+
+    const { useChatStore } = await import('../src/stores/chat')
+    const store = useChatStore()
+    await store.loadConversations()
+    await store.openConversation(11)
+    await store.send('需要哪些材料？')
+
+    const assistant = store.messages[store.messages.length - 1]
+    // 正文里绝不能出现 PLAN/REFLECT 的 JSON —— 这正是「答案开头压着一大段 queries」的根因
+    expect(assistant.content).toBe('需要发票原件[1]。')
+    const plan = assistant.steps.find((step) => step.phase === 'PLAN')
+    const reflect = assistant.steps.find((step) => step.phase === 'REFLECT')
+    expect(plan?.payload).toBe(planPayload)
+    expect(reflect?.payload).toBe(reflectPayload)
+  })
 })

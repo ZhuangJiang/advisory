@@ -1,44 +1,48 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ChatMessage } from '@/stores/chat'
+import { renderMarkdown } from '@/utils/markdown'
 
 /**
  * One message row. Two jobs:
  *
- *  - turn `[n]` into a clickable superscript. Only indices that actually have a citation are
- *    markers; a stray `[9]` in the text would otherwise open an empty drawer.
+ *  - render the answer as Markdown, with `[n]` turned into a clickable superscript. Only indices
+ *    that actually have a citation become markers; a stray `[9]` in the text stays literal.
  *  - say out loud when an answer is incomplete. `TRUNCATED` is a real outcome (round limit or
  *    timeout) and a `FAILED` row carries the provider's reason, so neither is rendered as if it
  *    were a normal answer.
+ *
+ * 渲染成 HTML 之后就没有 Vue 的事件绑定了，引用角标改用事件委托：一个监听器挂在正文容器上，
+ * 点击落在 `sup.cite` 时再按 `data-cite` 派发。流式期间每次增量都会重渲染，逐个绑定监听器
+ * 既费事又会在重渲染时丢失。
  */
 const props = defineProps<{ message: ChatMessage }>()
 
 const emit = defineEmits<{ cite: [index: number]; reasoning: [] }>()
 
-type Segment = { kind: 'text'; text: string } | { kind: 'cite'; index: number }
+const html = computed(() =>
+  renderMarkdown(
+    props.message.content ?? '',
+    props.message.citations.length,
+    props.message.citations.map((citation) => citation.docName)
+  )
+)
 
-const segments = computed<Segment[]>(() => {
-  const text = props.message.content ?? ''
-  const limit = props.message.citations.length
-  const out: Segment[] = []
-  const pattern = /\[(\d{1,3})\]/g
-  let cursor = 0
-  for (const match of text.matchAll(pattern)) {
-    const index = Number(match[1]) - 1
-    if (index < 0 || index >= limit || match.index === undefined) {
-      continue
-    }
-    if (match.index > cursor) {
-      out.push({ kind: 'text', text: text.slice(cursor, match.index) })
-    }
-    out.push({ kind: 'cite', index })
-    cursor = match.index + match[0].length
+function onBodyClick(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) {
+    return
   }
-  if (cursor < text.length) {
-    out.push({ kind: 'text', text: text.slice(cursor) })
+  const marker = target.closest('sup.cite')
+  const raw = marker?.getAttribute('data-cite')
+  if (raw === null || raw === undefined) {
+    return
   }
-  return out
-})
+  const index = Number(raw)
+  if (Number.isInteger(index) && index >= 0 && index < props.message.citations.length) {
+    emit('cite', index)
+  }
+}
 
 const isUser = computed(() => props.message.role === 'USER')
 const statusLabel = computed(() => {
@@ -102,19 +106,9 @@ const statusLabel = computed(() => {
       />
 
       <div v-if="message.status !== 'FAILED'" class="body">
-        <template v-for="(segment, index) in segments" :key="index">
-          <span v-if="segment.kind === 'text'">{{ segment.text }}</span>
-          <sup
-            v-else
-            class="cite"
-            data-test="cite"
-            :title="message.citations[segment.index]?.docName ?? '引用'"
-            @click="emit('cite', segment.index)"
-          >
-            {{ segment.index + 1 }}
-          </sup>
-        </template>
-        <span v-if="message.status === 'STREAMING'" class="caret">▍</span>
+        <!-- 流式光标交给头部的「生成中」标签表达：正文渲染成块级元素后，行内光标只会掉到下一行 -->
+        <!-- eslint-disable-next-line vue/no-v-html -- 已过 DOMPurify 消毒，见 utils/markdown.ts -->
+        <div class="markdown" data-test="markdown" @click="onBodyClick" v-html="html" />
       </div>
 
       <div v-if="!isUser && (message.citations.length > 0 || message.latencyMs !== null)" class="foot">
@@ -169,11 +163,128 @@ const statusLabel = computed(() => {
 }
 
 .body {
-  white-space: pre-wrap;
   line-height: 1.75;
   font-size: 14px;
   color: #303133;
   word-break: break-word;
+}
+
+/* Markdown 正文：只做「读得舒服」需要的那几类元素，不引入主题包 */
+.markdown {
+  overflow-x: auto;
+}
+
+.markdown :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.markdown :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.markdown :deep(p) {
+  margin: 0 0 8px;
+}
+
+.markdown :deep(h1),
+.markdown :deep(h2),
+.markdown :deep(h3),
+.markdown :deep(h4),
+.markdown :deep(h5),
+.markdown :deep(h6) {
+  margin: 14px 0 6px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.markdown :deep(h1) {
+  font-size: 18px;
+}
+
+.markdown :deep(h2) {
+  font-size: 16px;
+}
+
+.markdown :deep(h3) {
+  font-size: 15px;
+}
+
+.markdown :deep(h4),
+.markdown :deep(h5),
+.markdown :deep(h6) {
+  font-size: 14px;
+}
+
+.markdown :deep(ul),
+.markdown :deep(ol) {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+
+.markdown :deep(li) {
+  margin: 2px 0;
+}
+
+.markdown :deep(li > p) {
+  margin: 0;
+}
+
+.markdown :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid #dcdfe6;
+  color: #606266;
+  background: #fafbfc;
+}
+
+.markdown :deep(code) {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #f2f3f5;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.markdown :deep(pre) {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f6f8fa;
+  overflow-x: auto;
+}
+
+.markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown :deep(table) {
+  margin: 8px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown :deep(th),
+.markdown :deep(td) {
+  border: 1px solid #e4e7ed;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.markdown :deep(th) {
+  background: #fafbfc;
+  font-weight: 600;
+}
+
+.markdown :deep(hr) {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid #ebeef5;
+}
+
+.markdown :deep(a) {
+  color: #409eff;
 }
 
 .cite {
@@ -185,17 +296,6 @@ const statusLabel = computed(() => {
 
 .cite:hover {
   text-decoration: underline;
-}
-
-.caret {
-  color: #409eff;
-  animation: blink 1s step-end infinite;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
 }
 
 .foot {

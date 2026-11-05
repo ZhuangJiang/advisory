@@ -46,7 +46,7 @@ $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
 mvn -f backend/pom.xml test                 # 232 用例，需要 Docker（Testcontainers 起 PG/MinIO）
 
 # 前端
-npm --prefix frontend run test              # 47 用例（vitest + jsdom）
+npm --prefix frontend run test              # 59 用例（vitest + jsdom）
 npm --prefix frontend run build             # vue-tsc --noEmit + vite build
 
 # 全栈（postgres / minio / minio-init / backend / frontend）
