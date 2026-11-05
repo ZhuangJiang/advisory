@@ -1,19 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import { ElOption } from 'element-plus'
+import ElementPlus, { ElMessageBox, ElOption } from 'element-plus'
 import type { Citation, MessageDetail, MessageSummary } from '../src/api/chat'
 
 /**
  * The chat page is the only place where a live stream and the persisted record have to agree.
  *
- * Three things are pinned here:
+ * Four things are pinned here:
  *  1. the reasoning panel groups by round — the orchestrator's loop (PLAN once, then
  *     RETRIEVE → REFLECT per round) is invisible in a flat list;
  *  2. a `TRUNCATED` answer is shown with a banner, never as a silent success;
  *  3. the store turns `delta` / `step` / `citations` frames into exactly one assistant message, so
- *     a partial stream is still readable.
+ *     a partial stream is still readable;
+ *  4. a thread can be renamed by the server (first question) and deleted by its owner, and neither
+ *     may reach across user boundaries — an administrator's read-only view has no delete button.
  */
 
 const conversation = {
@@ -100,6 +101,7 @@ vi.mock('../src/api/chat', async (importOriginal) => {
     listMessages: vi.fn(() => Promise.resolve(summaries)),
     getMessage: vi.fn(() => Promise.resolve(detail)),
     createConversation: vi.fn(() => Promise.resolve(conversation)),
+    deleteConversation: vi.fn(() => Promise.resolve()),
     ask: vi.fn(() => new AbortController())
   }
 })
@@ -259,6 +261,8 @@ describe('chat view', () => {
     expect(wrapper.text()).toContain('需要发票原件与审批单')
     expect(wrapper.text()).toContain('已达最大轮数')
     expect(wrapper.findAll('[data-test="round"]')).toHaveLength(2)
+    // 标题同时出现在侧栏与对话区头部：找会话、确认自己在哪条线索上，靠的都是这一行字
+    expect(wrapper.find('[data-test="thread-title"]').text()).toBe('报销流程')
   })
 
   it('opens another user\'s thread read-only for an administrator', async () => {
@@ -267,6 +271,25 @@ describe('chat view', () => {
     expect(wrapper.find('[data-test="read-only"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="send"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="question"]').attributes('disabled')).toBeDefined()
+    // 审计视图只读：删除按钮根本不该出现，否则点下去只会拿到 403
+    expect(wrapper.findAll('[data-test="delete-conversation"]')).toHaveLength(0)
+  })
+
+  it('deletes a thread after confirmation', async () => {
+    const chat = await import('../src/api/chat')
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const wrapper = await mountChatView({ userId: 1 })
+
+    const buttons = wrapper.findAll('[data-test="delete-conversation"]')
+    expect(buttons).toHaveLength(1)
+    await buttons[0].trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalled()
+    expect(vi.mocked(chat.deleteConversation)).toHaveBeenCalledWith(11)
+    expect(wrapper.text()).not.toContain('报销流程')
+    expect(wrapper.text()).toContain('还没有会话')
+    confirm.mockRestore()
   })
 
   it('asks the server for online agents only and never offers an offline one', async () => {
@@ -351,5 +374,56 @@ describe('chat store', () => {
     const reflect = assistant.steps.find((step) => step.phase === 'REFLECT')
     expect(plan?.payload).toBe(planPayload)
     expect(reflect?.payload).toBe(reflectPayload)
+  })
+
+  it('adopts the title the server generated from the first question', async () => {
+    const chat = await import('../src/api/chat')
+    vi.mocked(chat.listConversations).mockResolvedValueOnce({
+      content: [{ ...conversation, title: null }],
+      page: 0,
+      size: 50,
+      total: 1,
+      totalPages: 1
+    })
+    vi.mocked(chat.ask).mockImplementation((_id, _content, handlers) => {
+      handlers.onMeta?.({ messageId: 44, conversationId: 11, title: '报销时限是多久' })
+      handlers.onDone?.({ messageId: 44, status: 'COMPLETED', latencyMs: 20 })
+      return new AbortController()
+    })
+
+    const { useChatStore } = await import('../src/stores/chat')
+    const store = useChatStore()
+    await store.loadConversations()
+    await store.openConversation(11)
+    expect(store.conversations[0].title).toBeNull()
+
+    await store.send('报销时限是多久？')
+
+    // 服务端在首帧 `meta` 里带回了刚起的名字，侧栏不能继续显示「未命名会话」
+    expect(store.conversations[0].title).toBe('报销时限是多久')
+  })
+
+  it('drops a deleted thread and opens the next one', async () => {
+    const chat = await import('../src/api/chat')
+    vi.mocked(chat.listConversations).mockResolvedValueOnce({
+      content: [conversation, { ...conversation, id: 12, title: '费用明细' }],
+      page: 0,
+      size: 50,
+      total: 2,
+      totalPages: 1
+    })
+
+    const { useChatStore } = await import('../src/stores/chat')
+    const store = useChatStore()
+    await store.loadConversations()
+    await store.openConversation(11)
+
+    await store.removeConversation(11)
+
+    expect(vi.mocked(chat.deleteConversation)).toHaveBeenCalledWith(11)
+    expect(store.conversations.map((item) => item.id)).toEqual([12])
+    // 停在已被删除的 id 上会让页面试图打开一条不存在的会话，必须切到相邻的那条
+    expect(store.activeId).toBe(12)
+    expect(store.messages.length).toBeGreaterThan(0)
   })
 })

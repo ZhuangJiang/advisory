@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listAgents, type Agent } from '@/api/agents'
 import { useChatStore, type ChatMessage } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
-import type { Citation } from '@/api/chat'
+import type { Citation, Conversation } from '@/api/chat'
 import MessageBubble from '@/components/MessageBubble.vue'
 import ReasoningPanel from '@/components/ReasoningPanel.vue'
 import CitationDrawer from '@/components/CitationDrawer.vue'
@@ -107,6 +107,33 @@ async function createThread(): Promise<void> {
   }
 }
 
+/**
+ * 只有本人能删自己的会话：管理员进别人的会话是只读审计，删除是写操作，服务端也会 403。
+ * 正在回答的会话也不给删——服务端会用 409 拒绝，界面上就不该让人先踩一次。
+ */
+function canDelete(conversation: Conversation): boolean {
+  return auth.user !== null && conversation.userId === auth.user.id
+}
+
+async function remove(conversation: Conversation): Promise<void> {
+  const name = conversation.title || '未命名会话'
+  try {
+    await ElMessageBox.confirm(
+      `删除「${name}」后不可恢复，会话中的消息与推理过程会一并删除。`,
+      '删除会话',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return // 用户取消，什么都不做
+  }
+  try {
+    await store.removeConversation(conversation.id)
+    ElMessage.success('已删除')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '删除会话失败')
+  }
+}
+
 async function send(): Promise<void> {
   const question = draft.value.trim()
   if (!question || readOnly.value) {
@@ -148,10 +175,24 @@ function openCitation(message: ChatMessage, index: number): void {
           :class="{ active: conversation.id === store.activeId }"
           @click="select(conversation.id)"
         >
-          <div class="thread-name">{{ conversation.title || '未命名会话' }}</div>
-          <div class="thread-meta">
-            {{ conversation.agentName }} · v{{ conversation.agentVersion }}
+          <div class="thread-text">
+            <div class="thread-name">{{ conversation.title || '未命名会话' }}</div>
+            <div class="thread-meta">
+              {{ conversation.agentName }} · v{{ conversation.agentVersion }}
+            </div>
           </div>
+          <el-button
+            v-if="canDelete(conversation)"
+            class="thread-delete"
+            link
+            type="danger"
+            size="small"
+            data-test="delete-conversation"
+            :disabled="store.streaming && conversation.id === store.activeId"
+            @click.stop="remove(conversation)"
+          >
+            删除
+          </el-button>
         </div>
         <div v-if="store.conversations.length === 0" class="thread-empty">还没有会话</div>
       </div>
@@ -160,8 +201,12 @@ function openCitation(message: ChatMessage, index: number): void {
     <section class="thread">
       <header class="thread-head">
         <div v-if="store.activeConversation" class="thread-title">
-          {{ store.activeConversation.agentName }}
-          <el-tag size="small" type="info">v{{ store.activeConversation.agentVersion }}</el-tag>
+          <span class="thread-title-text" data-test="thread-title">
+            {{ store.activeConversation.title || '未命名会话' }}
+          </span>
+          <el-tag size="small" type="info">
+            {{ store.activeConversation.agentName }} · v{{ store.activeConversation.agentVersion }}
+          </el-tag>
           <el-tag v-if="readOnly" size="small" type="warning" data-test="read-only">只读</el-tag>
         </div>
         <div v-else class="thread-title">对话</div>
@@ -300,6 +345,25 @@ function openCitation(message: ChatMessage, index: number): void {
   padding: 10px 12px;
   border-bottom: 1px solid #f0f2f5;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 删除藏到悬停里：侧栏每行都挂一个红字按钮，扫列表时噪音太大。 */
+.thread-delete {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.thread-item:hover .thread-delete,
+.thread-item.active .thread-delete {
+  opacity: 1;
 }
 
 .thread-item:hover {
@@ -353,6 +417,14 @@ function openCitation(message: ChatMessage, index: number): void {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+  min-width: 0;
+}
+
+.thread-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
 }
 
 .thread-actions {

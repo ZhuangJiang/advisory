@@ -7,10 +7,10 @@ dist/
 *.iml
 .vscode/
 backend/data/
-backend/.settings
-backend/.classpath
-backend/.project
-backend/.lithe/
+backend/advisory-server/.settings
+backend/advisory-server/.classpath
+backend/advisory-server/.project
+backend/advisory-server/.lithe/
 
 # Local WorkBuddy work notes (memory logs), not part of the deliverable
 .workbuddy/

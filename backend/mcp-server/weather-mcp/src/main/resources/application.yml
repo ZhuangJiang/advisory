@@ -1,0 +1,37 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: weather-mcp
+  ai:
+    mcp:
+      server:
+        # 客户端先 GET /sse 建立事件流，再向 /mcp/message 提交请求。
+        # 改名会同时改掉客户端配置，别只改一半。
+        name: weather-mcp
+        version: 0.0.1
+        type: SYNC
+        sse-message-endpoint: /mcp/message
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+app:
+  weather:
+    # open-meteo = 真实数据（需公网）；stub = 固定假数据，供离线开发与测试
+    provider: ${WEATHER_PROVIDER:open-meteo}
+    timeout: ${WEATHER_TIMEOUT:5s}
+    geocoding-cache-ttl: ${WEATHER_GEO_CACHE_TTL:1h}
+    geocoding-base-url: ${OPEN_METEO_GEOCODING_URL:https://geocoding-api.open-meteo.com}
+    forecast-base-url: ${OPEN_METEO_FORECAST_URL:https://api.open-meteo.com}
+
+logging:
+  level:
+    com.advisory.mcp.weather: INFO

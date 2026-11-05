@@ -25,7 +25,7 @@ docker compose up -d postgres minio minio-init
 
 # 2. 运行后端（Windows 下需显式指定 JDK 21；本机默认 JAVA_HOME 可能是 JDK 8）
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml spring-boot:run
+mvn -f backend/advisory-server/pom.xml spring-boot:run
 
 # 3. 运行前端（5173，/api 代理到 8080）
 npm --prefix frontend install
@@ -35,7 +35,7 @@ npm --prefix frontend run dev
 curl http://localhost:8080/actuator/health
 ```
 
-首次启动由 Flyway 自动执行 `backend/src/main/resources/db/migration/` 下的迁移建表。
+首次启动由 Flyway 自动执行 `backend/advisory-server/src/main/resources/db/migration/` 下的迁移建表。
 
 - PostgreSQL：`localhost:5432`，库 / 用户 / 密码默认 `advisory` / `advisory` / `advisory`
 - MinIO S3 API：`localhost:9000`，控制台 `localhost:9001`
@@ -45,7 +45,7 @@ curl http://localhost:8080/actuator/health
 
 ```powershell
 docker compose up -d --build
-docker compose ps          # postgres / minio / backend / frontend 全部 healthy
+docker compose ps          # postgres / minio / backend / frontend / weather-mcp 全部 healthy
 ```
 
 - 入口：`http://localhost/`（nginx，80 端口）。SPA 走 `try_files` 回退，`/api/` 反代到后端。
@@ -53,6 +53,7 @@ docker compose ps          # postgres / minio / backend / frontend 全部 health
 - **必须设置 `MINIO_PUBLIC_ENDPOINT`**：预签名 URL 按该主机签名，浏览器要能直接访问（本地默认 `http://localhost:9000`，生产填对外域名）。留空则回落到 `MINIO_ENDPOINT`，此时容器内的 `minio:9000` 浏览器不可达，上传会失败。
 - 镜像构建默认使用阿里云 Maven 镜像；如需官方源，`docker compose build --build-arg MAVEN_MIRROR=`。
 - 后端单副本：文档解析任务与 SSE 编排在进程内，不支持横向扩容。
+- **MCP 服务独立于主链路**：`weather-mcp` 是单独容器（`8081`），backend 停了它照常服务，反之亦然。
 
 ## 配置
 
@@ -66,7 +67,9 @@ docker compose ps          # postgres / minio / backend / frontend 全部 health
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test          # 197 用例，需 Docker（Testcontainers）
+mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 253 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/advisory-server/pom.xml test # 只跑后端主服务
+mvn -f backend/mcp-server/weather-mcp/pom.xml test   # 只跑天气 MCP，无需 Docker
 npm --prefix frontend run test       # 37 用例
 npm --prefix frontend run build      # vue-tsc + vite build
 
@@ -96,9 +99,39 @@ powershell -File scripts/smoke.ps1
 ## 目录
 
 ```
-backend/          Spring Boot 后端（Maven，artifact: advisory-backend）
+backend/                       Maven 聚合工程（packaging=pom，锁版本与 JDK 21）
+  advisory-server/             主后端（原 backend，artifact: advisory-server）
+  mcp-server/                  MCP 服务族聚合（packaging=pom）
+    weather-mcp/               天气 MCP 服务（Spring AI MCP Server，SSE，:8081）
 frontend/         Vue 3 SPA（Vite；生产镜像由 nginx 托管）
 deploy/           nginx.conf、init-bucket.sh
 scripts/          smoke.ps1（端到端冒烟）、fake-model-server.mjs（本地模型桩）
 docs/             backend.md、frontend.md（说明文档）；acceptance.md（验收）；spec 与实施计划
+```
+
+## MCP 服务
+
+`backend/mcp-server` 是一个可扩展的 MCP 服务族：每个子模块 = 一个独立部署的 Spring Boot 进程，
+与 `advisory-server` 无代码与数据依赖，新增服务只需在 `backend/mcp-server/pom.xml` 里加一个 `<module>`。
+
+当前提供 `weather-mcp`（天气查询，数据源 Open-Meteo，无需 API Key）：
+
+```powershell
+$env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
+mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
+```
+
+- MCP 端点：`http://localhost:8081/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
+- 工具：`get_current_weather(city)`、`get_weather_forecast(city, days)`
+- 离线开发：`WEATHER_PROVIDER=stub`，返回固定假数据，不访问公网
+- 客户端接入（以 Claude Desktop 为例）：
+
+```json
+{
+  "mcpServers": {
+    "weather": {
+      "url": "http://localhost:8081/sse"
+    }
+  }
+}
 ```

@@ -10,7 +10,8 @@ import { getAccessToken } from './session'
  * cannot send an `Authorization` header nor a POST body.
  *
  * Frame contract (spec §11, produced by `SseStepSink`):
- *   meta      {messageId, conversationId}   — first frame, the reconnect handle
+ *   meta      {messageId, conversationId, title?} — first frame, the reconnect handle; `title` is
+ *             present only when this question just named an untitled thread
  *   step      {round, phase, status, summary}
  *   delta     {phase, text}
  *   citations {items: [{chunkId, documentId, docName, nodeName, snippet, score}]}
@@ -22,6 +23,8 @@ import { getAccessToken } from './session'
 export interface SseMeta {
   messageId: number
   conversationId: number
+  /** Set only when the server just named a previously untitled thread from the first question. */
+  title?: string | null
 }
 
 export interface SseStep {

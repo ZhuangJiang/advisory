@@ -4,6 +4,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!--
+        聚合根：只做三件事——锁版本、统一编译参数、声明模块。
+        不放任何依赖与插件执行：packaging=pom 的模块绑 spring-boot-maven-plugin 会在 package 阶段失败。
+        新增 MCP 服务时，在 backend/mcp-server 下加模块即可，不需要动这个文件。
+    -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -12,25 +17,22 @@
     </parent>
 
     <groupId>com.advisory</groupId>
-    <artifactId>advisory-backend</artifactId>
+    <artifactId>backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>advisory-backend</name>
-    <description>Intelligent advisory platform backend</description>
+    <packaging>pom</packaging>
+    <name>backend</name>
+    <description>Advisory platform aggregator: advisory-server + mcp-server</description>
+
+    <modules>
+        <module>advisory-server</module>
+        <module>mcp-server</module>
+    </modules>
 
     <properties>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <testcontainers.version>1.20.4</testcontainers.version>
-        <minio.version>8.5.17</minio.version>
-        <jjwt.version>0.12.6</jjwt.version>
-        <tika.version>2.9.2</tika.version>
-        <!--
-            tika-parent 2.9.2 把 commons-io 锁在 2.15.1，而 minio 带来的 commons-compress 1.27.1
-            用到了 2.16.0 才有的 org.apache.commons.io.input.ChecksumInputStream。Maven 就近选中
-            2.15.1 时，任何走压缩包探测的文档（PDF、以及部分 docx）解析都会抛 NoClassDefFoundError。
-            这里显式钉到 commons-compress 1.27.1 自己声明的 2.16.1。
-        -->
-        <commons-io.version>2.16.1</commons-io.version>
+        <!-- 全仓库统一的 Spring AI 版本；advisory-server 与 weather-mcp 必须一致，
+             因为两边都依赖 spring-ai 的 MCP 协议实现（客户端/服务端需同代）。 -->
         <spring-ai.version>1.0.9</spring-ai.version>
     </properties>
 
@@ -45,134 +47,4 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-database-postgresql</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>io.minio</groupId>
-            <artifactId>minio</artifactId>
-            <version>${minio.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-parsers-standard-package</artifactId>
-            <version>${tika.version}</version>
-        </dependency>
-        <!-- tika-parsers-standard-package declares tika-core as "provided", so it is not transitive. -->
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-core</artifactId>
-            <version>${tika.version}</version>
-        </dependency>
-        <!--
-            显式声明而不是只写 dependencyManagement：声明为直接依赖后版本距离为 1，
-            稳压 tika-core 传递进来的 2.15.1。升级 Tika / commons-compress 时请一并复核这个版本。
-        -->
-        <dependency>
-            <groupId>commons-io</groupId>
-            <artifactId>commons-io</artifactId>
-            <version>${commons-io.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>${jjwt.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- Spring AI: core modules only, no starters. Clients are built programmatically because
-             one `models` row maps to one provider at runtime (yml-based starter auto-configuration
-             cannot express that); Task 8 runs vector search as explicit SQL, so no vector-store
-             bean is needed. -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-ollama</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>minio</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>

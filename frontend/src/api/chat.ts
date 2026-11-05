@@ -91,6 +91,15 @@ export function listMessages(conversationId: number): Promise<MessageSummary[]> 
   return http.get(`/api/conversations/${conversationId}/messages`)
 }
 
+/**
+ * Deletes a thread. Messages and reasoning steps are removed by the database cascade, so this is
+ * the only call needed. A thread that is still answering is refused with 409 `CONVERSATION_BUSY`:
+ * the server cannot delete rows a worker is about to write into.
+ */
+export function deleteConversation(conversationId: number): Promise<void> {
+  return http.delete(`/api/conversations/${conversationId}`)
+}
+
 export function getMessage(messageId: number): Promise<MessageDetail> {
   return http.get(`/api/messages/${messageId}`)
 }

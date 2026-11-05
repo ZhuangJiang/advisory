@@ -3,7 +3,7 @@
 面向要读代码、改代码或排障的人。前端部分见 [`frontend.md`](frontend.md)，部署与验收见
 [`../README.md`](../README.md) 与 [`acceptance.md`](acceptance.md)。
 
-- Java 21 + Spring Boot 3.4.13（Maven，artifact `advisory-backend`）
+- Java 21 + Spring Boot 3.4.13（Maven 多模块，本模块 artifact `advisory-server`，位于 `backend/advisory-server/`）
 - PostgreSQL 16 + `pgvector` + `pg_trgm` + `ltree`，表结构由 Flyway 管理
 - MinIO 存原文件与解析产物；Spring AI 只用于调用模型，不接管向量存储
 - **单副本**：文档任务队列与 SSE 编排都在进程内，不要水平扩容
@@ -63,7 +63,7 @@ docker compose up -d postgres minio minio-init
 
 # 后端（Windows 下本机 JAVA_HOME 可能指向 JDK 8，必须显式覆盖）
 export JAVA_HOME='/d/Program Files/Java/jdk-21.0.9+10'
-mvn -f backend/pom.xml spring-boot:run
+mvn -f backend/advisory-server/pom.xml spring-boot:run
 
 # 前端另开一个终端
 npm --prefix frontend run dev        # 5173，/api 代理到 8080
@@ -98,6 +98,7 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin` | 仅首次启动、库中无管理员时生效 |
 | `CHAT_CONTEXT_WINDOW_TOKENS` | `8192` | Ollama 请求里的 `num_ctx`，**同时**是编排器裁剪证据时用的窗口，两处共用一个值。Ollama 服务端默认只有 4096，跨轮证据很容易撑爆；显存紧张时调小，换大窗口模型时调大 |
 | `app.embedding.dimension` | `1024` | 固定维度，改它等于换掉整个向量契约 |
+| `RETRIEVAL_MIN_SIMILARITY` | `0.55` | 向量检索的相关性下限（整轮最高分）。低于它即判「知识库没有这方面内容」。默认值按 bge-m3 实测校准，换模型要重调；`0` 表示关闭 |
 
 `app.jwt.access-ttl=PT30M`、`refresh-ttl=P7D` 写在 `application.yml` 里，没有做成环境变量。
 
@@ -204,9 +205,12 @@ HTTP
 | `chunks` | 分块与向量 | `embedding VECTOR(1024)`，HNSW 余弦索引 + `pg_trgm` GIN |
 | `agents` | Agent 当前配置 | `current_version`；`kb_ids`/`node_scope` 为 JSONB；`deleted_at` 非空表示已软删 |
 | `agent_versions` | 历史快照 | 只追加，`snapshot` 是 `AgentSnapshot` 的 JSON |
-| `conversations` | 会话 | 保存 `agent_id + agent_version`，**锁定版本** |
+| `conversations` | 会话 | 保存 `agent_id + agent_version`，**锁定版本**；`title` 由首个问题生成 |
 | `messages` | 消息 | `status` 五态；`citations`/`token_usage` 为 JSONB |
 | `reasoning_steps` | 推理步骤 | **主数据**，SSE 只是实时通道 |
+
+`messages.conversation_id` 与 `reasoning_steps.message_id` 都是 `ON DELETE CASCADE`，因此删会话只需一条
+`DELETE FROM conversations`——会话下的消息与推理步骤自动消失。不要在应用层逐表删，漏一张就是外键报错。
 
 两个容易踩的索引细节：
 
@@ -217,8 +221,11 @@ HTTP
 
 ### 迁移规则
 
-> **V1–V3 已发布并应用，禁止修改**。改已应用的文件会改变 Flyway checksum，既有环境启动即 `validate` 失败。
-> 一切变更从 **V4** 起新增文件。
+> **V1–V5 已发布并应用，禁止修改**。改已应用的文件会改变 Flyway checksum，既有环境启动即 `validate` 失败。
+> 一切变更从 **V6** 起新增文件。
+>
+> `V5` 是一次纯数据回填：把历史会话的标题补齐（取首条用户消息前 24 个码点，口径与
+> `ConversationTitles#derive` 一致）。它只写 `title IS NULL OR btrim(title) = ''` 的行，已有标题不动。
 
 ---
 
@@ -353,6 +360,16 @@ score(chunk) = Σ over lists  1 / (60 + rank_in_list)
 参数：`perKbTopK` 默认 20、`finalTopK` 默认 8，都收敛到 `[1, 100]`；非正数表示「用默认值」。
 `kbIds` 为空直接 400。没配向量模型的知识库只贡献关键词路径。
 
+**向量路径有相关性下限**（`RETRIEVAL_MIN_SIMILARITY`，默认 `0.55`）：整轮结果里分数最高的一条没过线，
+这**整轮**丢弃（不是逐条裁）。判据只看最高分是有意的——只要有一条真的相关，召回就完全不受影响；
+逐条过滤反而会悄悄丢掉弱相关但含答案的片段。
+
+没有这道闸门时，任何输入都必然凑出 `topK` 条「最像的」：`bge-m3` 对无关文本也会给 0.4–0.55 的余弦分，
+于是「你好」也能拿到 8 段碳资产正文，编排器把噪声当证据、多跑两轮反思、最后基于噪声作答。
+实测分布（同一知识库、bge-m3）：寒暄与无关问题 top1 落在 **0.41–0.54**，真实业务问题落在 **0.60–0.78**。
+
+换底噪更低的向量模型（如 OpenAI `text-embedding-3` 系列，无关文本常在 0.1 上下）时应下调该值或设 0 关闭。
+
 ---
 
 ## 9. 对话与编排
@@ -360,6 +377,8 @@ score(chunk) = Σ over lists  1 / (60 + rank_in_list)
 ### 四阶段
 
 ```
+寒暄（你好/谢谢/你是谁）──────────────────────→ ANSWER（固定话术，不检索）
+
 PLAN（一次，产出 1–3 条查询）
   └→ RETRIEVE → REFLECT ─┐
        ↑                 │ 证据不足且未达 maxRounds
@@ -369,6 +388,19 @@ PLAN（一次，产出 1–3 条查询）
 
 `maxRounds=3` 意味着 **1 次 PLAN、3 次 RETRIEVE、3 次 REFLECT、1 次 ANSWER**。
 `REFLECT` 报 `sufficient=true` 或 `round >= maxRounds` 时退出循环。
+
+**两个短路**，都是「不让没有依据的问题假装跑完一条流水线」：
+
+| 触发 | 行为 |
+|---|---|
+| 纯寒暄 / 元问题（`SmallTalk`） | 不检索、不调模型、不产生 PLAN/REFLECT，直接回固定话术（带 Agent 名字），轨迹只有一条 `ANSWER` 步骤。判据保守：去掉标点与语气词后必须**整句**都是寒暄词且 ≤12 字，「你好，核算边界怎么划定」不算 |
+| 某轮零召回 | 直接收敛到 ANSWER（REFLECT 的全部工作就是判「这批片段够不够」，没有片段可判时它只会再编一轮查询） |
+| 某轮召回的全是已有片段 | 同上：再看一遍同一批证据不会有新结论 |
+
+没有这两条短路时，「你好」的真实轨迹是：PLAN 出 `["问候语","您好","你好"]` → 向量检索凑出 8 段
+碳资产正文（打分 0.5 上下）→ REFLECT 判「证据不足」→ 第 2、3 轮继续拿噪声检索 → 累计 22 段 →
+最后一轮 REFLECT 被噪声说服判「证据充分」→ ANSWER 基于 22 段无关片段写出一篇「咨询建议」。
+三步模型调用、20 多秒，产出一个看起来很像答案的错误答案。
 
 失败一律降级，不抛 500：
 
@@ -380,6 +412,8 @@ PLAN（一次，产出 1–3 条查询）
 | REFLECT 提示词超窗 | 不再重试，直接进 ANSWER，标记 `truncated=true` |
 | ANSWER 提示词超窗 | 返回固定话术（`CONTEXT_EXCEEDED_ANSWER`）并标记 `truncated=true`，**不是** `FAILED`；401、模型不存在等其它故障仍如实失败 |
 | 一条证据都没有 | **不调模型**，返回固定话术（不得凭参数化知识作答） |
+| 纯寒暄 / 元问题 | 不检索、不调模型，直接回固定话术（`smallTalkAnswer`） |
+| 某轮零召回或零新增 | 立即收敛到 ANSWER，不进入 REFLECT；**不**标记 `truncated`（没找到依据不是截断） |
 
 证据跨轮累积，按 `chunkId` 以首次出现顺序去重，因此正文里的 `[n]` 与 `citations[n-1]` 严格对应。
 
@@ -392,7 +426,7 @@ PLAN（一次，产出 1–3 条查询）
 ### SSE 帧序
 
 ```
-meta      {messageId, conversationId}    首帧，断线重连的句柄
+meta      {messageId, conversationId, title?}   首帧，断线重连的句柄；title 仅在本问题刚给会话命名时出现
 step      {round, phase, status, summary} × N
 delta     {phase, text}                  答案增量
 citations {items: [...]}
@@ -403,6 +437,27 @@ ping      {}                             每 15s
 
 `SseEmitter` 超时 180s 与编排的整体预算对齐。改帧结构必须同时改
 `chat/service/SseStepSink` 与 `frontend/src/api/sse.ts`。
+
+### 会话命名与删除
+
+**命名在首个提问时完成，不调模型**：`start()` 在写完 USER 行之后、启动工作线程之前调
+`ConversationTitles#derive(question)`——折叠空白、去掉句末标点、按**码点**截到 24 位并加「…」。
+`UPDATE conversations SET title = ? WHERE id = ? AND (title IS NULL OR btrim(title) = '')` 保证
+后到的问题永远改不掉标题；新标题随首帧 `meta.title` 回给前端，侧栏当场改名，不用重拉列表。
+
+为什么不调模型起名：每次开新会话都要多付一次推理、多等几秒，还多一种失败模式（起名失败要不要
+影响提问？）。截断首个问题对区分线索已经够用。
+
+**删除**（`DELETE /api/conversations/{id}`）：
+
+| 情形 | 结果 |
+|---|---|
+| 本人删除自己的会话 | 200，消息与推理步骤级联删除 |
+| 别人的会话（普通用户） | 404，与「不存在」不可区分 |
+| 别人的会话（管理员） | **403**：管理员可以只读审计全部会话，但删除会毁掉审计证据 |
+| 该会话正在回答 | 409 `CONVERSATION_BUSY`。判忙用 `ConversationLock.tryAcquire` 而不是「先查后删」——后者有窗口，删完仍可能被新的提问抢进锁里 |
+
+正在回答时拒绝删除是必须的：工作线程握着会话 id，行一旦消失，它随后写消息、写步骤、标失败全都撞外键。
 
 ### 三条不变式
 
@@ -460,7 +515,8 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/pom.xml test` → **232 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/advisory-server/pom.xml test` → **253 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+（仓库根 `backend/pom.xml` 是聚合工程，`mvn -f backend/pom.xml test` 会把 `mcp-server` 下的 MCP 服务一起跑。）
 
 | 类型 | 位置 | 做法 |
 |---|---|---|

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        MCP 服务族的聚合模块：一个子目录 = 一个独立部署的 MCP Server 进程。
+        这里刻意不加 spring-boot-starter 之类的共享依赖——各 MCP 服务的能力差异很大，
+        共享依赖只会让「天气服务」莫名带上用不到的东西。共享的只有版本基线（父 POM）。
+    -->
+    <parent>
+        <groupId>com.advisory</groupId>
+        <artifactId>backend</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>mcp-server</artifactId>
+    <packaging>pom</packaging>
+    <name>mcp-server</name>
+    <description>MCP servers aggregator</description>
+
+    <modules>
+        <module>weather-mcp</module>
+    </modules>
+</project>

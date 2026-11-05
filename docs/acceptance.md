@@ -2,7 +2,7 @@
 
 - 验收环境：Windows 11 + Docker Desktop（WSL2 后端），单机 `docker compose` 全栈；后端 JDK 21，前端 Node 22。
 - 验收日期：2026-11-04。
-- 自动化基线：后端 `mvn -f backend/pom.xml test` **197 用例全绿**；前端 `npm --prefix frontend run test` **37 用例全绿**，`npm run build` 通过。
+- 自动化基线：后端 `mvn -f backend/advisory-server/pom.xml test` **197 用例全绿**；前端 `npm --prefix frontend run test` **37 用例全绿**，`npm run build` 通过。
 - 端到端：`scripts/smoke.ps1` 通过 nginx（`http://localhost`）跑完整链路，输出
   `SMOKE OK messageId=4 status=COMPLETED steps=4 citations=1 answerChars=169`。
   **限制**：该次冒烟使用的是 `scripts/fake-model-server.mjs`（OpenAI 兼容桩，1024 维确定性向量），
@@ -12,7 +12,7 @@
 
 | # | 验收项 | 验证方式 | 实际结果 | 结论 |
 |---|--------|----------|----------|------|
-| 1 | 知识库树任意层级增删改移动，同级重名拒绝，非空节点删除 `NODE_NOT_EMPTY` | `mvn -f backend/pom.xml test -Dtest=NodeTreeTest`（15 用例） | 全绿：移动/重名 40901/非空 40902 均有断言 | 通过 |
+| 1 | 知识库树任意层级增删改移动，同级重名拒绝，非空节点删除 `NODE_NOT_EMPTY` | `mvn -f backend/advisory-server/pom.xml test -Dtest=NodeTreeTest`（15 用例） | 全绿：移动/重名 40901/非空 40902 均有断言 | 通过 |
 | 2 | 上传 10 页 PDF，2 分钟内 `READY`，片段可预览；重启后中间态自动恢复 | `DocumentUploadTest`（12）、`ChunkBrowseTest`、`IngestRecoveryTest`（3）；冒烟上传 txt 实测 | 冒烟文档 ~4s 由 `PENDING` 变 `READY`，`GET /documents/{id}/chunks` 返回 1 条；重启恢复由 `IngestRecoveryTest` 覆盖（PARSING/CHUNKING/EMBEDDING 三态重新入队且不产生重复 chunks） | 部分通过：未用 10 页 PDF 实测耗时 |
 | 3 | 连通性测试区分网络不可达 / 鉴权失败 / 模型不存在 | `ProviderProbeClassifyTest`（10 用例） | 三类错误码 `NETWORK_UNREACHABLE` / `AUTH_FAILED` / `MODEL_NOT_FOUND` 分别断言 | 通过 |
 | 4 | 两库不同节点子树，检索不越界 | `RetrievalTest`（18 用例） | 范围外 chunk 不出现在结果中（SQL + 接口双层断言）；悬空 nodeId 被忽略 | 通过 |

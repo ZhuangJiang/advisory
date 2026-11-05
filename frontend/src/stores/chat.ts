@@ -4,6 +4,7 @@ import { ApiError } from '@/api/client'
 import {
   ask as askStream,
   createConversation,
+  deleteConversation as deleteConversationApi,
   getMessage,
   listConversations,
   listMessages,
@@ -226,6 +227,41 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 服务端在首个提问时给这条会话起了名，`meta` 帧顺带把它送回来，侧栏据此改名。
+   * 不重拉列表是刻意的：列表带分页与排序，为了一行标题去刷新会把滚动位置一起打乱。
+   */
+  function applyTitle(id: number, title: string): void {
+    const conversation = conversations.value.find((item) => item.id === id)
+    if (conversation) {
+      conversation.title = title
+    }
+  }
+
+  /**
+   * 删除一条会话并把它从侧栏摘掉。删掉的正是当前会话时，顺手打开剩下的第一条——
+   * 留一个空白的对话区比自动切到相邻线索更让人困惑（也不能停在已不存在的 id 上）。
+   */
+  async function removeConversation(id: number): Promise<void> {
+    await deleteConversationApi(id)
+    const index = conversations.value.findIndex((item) => item.id === id)
+    if (index >= 0) {
+      conversations.value.splice(index, 1)
+    }
+    if (activeId.value !== id) {
+      return
+    }
+    stop()
+    messages.value = []
+    focusedKey.value = null
+    error.value = ''
+    activeId.value = null
+    const next = conversations.value[0]
+    if (next) {
+      await openConversation(next.id)
+    }
+  }
+
+  /**
    * Sends one question. The user row and an empty assistant row are inserted immediately so the
    * screen reacts before the first frame; every handler then mutates that same assistant row.
    */
@@ -273,6 +309,9 @@ export const useChatStore = defineStore('chat', () => {
     const started = askStream(conversationId, question, {
       onMeta(meta) {
         target.id = meta.messageId
+        if (meta.title) {
+          applyTitle(conversationId, meta.title)
+        }
       },
       onStep(step) {
         mergeStep(target, {
@@ -390,6 +429,8 @@ export const useChatStore = defineStore('chat', () => {
     openConversation,
     loadDetail,
     startConversation,
+    applyTitle,
+    removeConversation,
     send,
     stop,
     focus,

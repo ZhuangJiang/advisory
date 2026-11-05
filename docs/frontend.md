@@ -125,7 +125,7 @@ token 存 `localStorage`（键 `advisory.accessToken` / `advisory.refreshToken`�
 由后端 `SseStepSink` 产出，改结构必须两边一起改：
 
 ```
-meta       {messageId, conversationId}   首帧，断线重连的句柄
+meta       {messageId, conversationId, title?}   首帧，断线重连的句柄；title 只在服务端刚给会话命名时出现
 step       {round, phase, status, summary}      phase ∈ PLAN|RETRIEVE|REFLECT|ANSWER
 delta      {phase, text}                 增量：phase=ANSWER 是答案正文，PLAN/REFLECT 是该步骤的 JSON 载荷
 citations  {items: [{chunkId, documentId, docName, nodeName, snippet, score}]}
@@ -137,6 +137,10 @@ ping       {}                            每 15s，前端忽略
 解析器必须容忍**一帧被拆到多个网络 chunk**，也要容忍一次 chunk 里有多帧——这正是它按字节测的原因。
 
 **`delta` 不是单一含义**：只有 `phase=ANSWER` 才能拼进答案正文。`PLAN` / `REFLECT` 推的是该步骤的结构化载荷（JSON 字符串），store 把它挂到对应步骤上，由 `utils/reasoning.ts` 解析成「检索查询 / 证据缺口」。早期版本一视同仁地拼接，界面上就表现为「答案开头压着一大段 `{"queries":…}`」。
+
+**轨迹不一定是四阶段**：寒暄（「你好」）只产生一条 `ANSWER` 步骤，`payload` 是
+`{"citations":0,"direct":true}`；知识库没覆盖的问题走到 `RETRIEVE` 就收敛（召回 0 时不再出现 `REFLECT`）。
+面板按实际步骤渲染，不要假设 `steps.length === 4` 或「一定有某一轮」；轮数少不是数据缺失。
 
 
 ### 断线恢复
@@ -165,8 +169,15 @@ ping       {}                            每 15s，前端忽略
 - `mergeStep()` 把 `started` / `finished` 两帧合并成一条 `ReasoningStepView`；
 - `ReasoningStepView` 是**视图模型而不是持久化记录**：实时帧没有耗时，持久化记录没有 `started` 状态，
   面板需要两种形状并存；
-- 列表操作：`loadConversations`、`openConversation`、`loadDetail`、`startConversation`、`send`、
-  `recover`、`stop`、`reset`。
+- 列表操作：`loadConversations`、`openConversation`、`loadDetail`、`startConversation`、`applyTitle`、
+  `removeConversation`、`send`、`recover`、`stop`、`reset`。
+
+**会话标题**由服务端在首个提问时生成，随 `meta.title` 回到前端，`applyTitle()` 就地改名——不重拉列表是
+刻意的：列表带分页与排序，为了一行标题刷新会把滚动位置一起打乱。`title` 为 null 时侧栏显示「未命名会话」。
+
+**删除会话**走 `removeConversation(id)`：先 `DELETE` 再摘掉侧栏那一行；删的正是当前会话时 `stop()` 清空
+消息并自动打开剩下的第一条——停在已删除的 id 上会让下一次操作打到不存在的会话。删除按钮只在
+`conversation.userId === auth.user.id` 时渲染：管理员进别人的会话是只读审计，服务端也会 403。
 
 ---
 
@@ -208,7 +219,7 @@ ping       {}                            每 15s，前端忽略
 | `Login` | 账号密码登录；默认管理员首次登录会被导向改密 |
 | `ChangePassword` | 改密后旧令牌全部失效，需重新建立会话 |
 | `Home` | 落地页 |
-| `chat/ChatView` | 会话列表 + 消息流 + 推理面板 + 引用抽屉；「新对话」只列在线 Agent（`listAgents(0, 50, true)`，过滤由服务端完成） |
+| `chat/ChatView` | 会话列表（标题 + 本人可删）+ 消息流 + 推理面板 + 引用抽屉；「新对话」只列在线 Agent（`listAgents(0, 50, true)`，过滤由服务端完成） |
 | `knowledge/KnowledgeBaseList` | 知识库增删改、重建索引 |
 | `knowledge/KnowledgeBaseDetail` | 节点树 + 文档表 + 多文件上传 + 批量重新裁切 |
 | `agents/AgentList` | Agent 列表、启停、删除 |
