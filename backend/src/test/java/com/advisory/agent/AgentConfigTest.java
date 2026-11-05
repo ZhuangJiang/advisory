@@ -329,6 +329,40 @@ class AgentConfigTest extends IntegrationTestBase {
                 .andExpect(status().isCreated());
     }
 
+    /**
+     * 对话页只应列出在线 Agent：{@code enabled=true} 在服务端与分页一起生效，
+     * 不传该参数时管理页仍能看到已下线的条目（否则无法重新上线）。
+     */
+    @Test
+    void listCanBeFilteredToOnlineAgentsOnly() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        long onlineId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+        long offlineId = createAgent("agent10-a-" + UUID.randomUUID(), List.of(kbId), Map.of(), "prompt");
+
+        mockMvc.perform(post("/api/agents/" + offlineId + "/offline")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // 普通用户建会话时看到的就是这个集合，所以用 userToken 验证
+        String onlineOnly = mockMvc.perform(get("/api/agents")
+                        .param("enabled", "true")
+                        .param("size", "100")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> filtered = JsonPath.read(onlineOnly, "$.data.content[*].id");
+        assertTrue(filtered.contains((int) onlineId), "在线 Agent 必须出现在可选列表里");
+        assertFalse(filtered.contains((int) offlineId), "已下线的 Agent 不能出现在可选列表里");
+
+        String all = mockMvc.perform(get("/api/agents")
+                        .param("size", "100")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> unfiltered = JsonPath.read(all, "$.data.content[*].id");
+        assertTrue(unfiltered.contains((int) offlineId), "管理页仍需看到已下线的 Agent 才能重新上线");
+    }
+
     @Test
     void patchCannotChangeEnabledAndStillCreatesExactlyOneVersion() throws Exception {
         long kbId = createKb(firstEmbeddingModelId);

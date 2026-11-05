@@ -87,8 +87,19 @@ export interface AgentInput {
   temperature: number
 }
 
-export function listAgents(page = 0, size = 20): Promise<Page<Agent>> {
-  return http.get(`/api/agents?page=${page}&size=${size}`)
+/**
+ * 分页列出 Agent。
+ *
+ * `enabled` 缺省时不过滤（管理页要看到已下线的条目才能重新上线）；对话页传 `true`，
+ * 由服务端与分页一起过滤——只取一页再本地筛会漏掉排在后面的在线 Agent。
+ *
+ * @param page 页码，从 0 开始
+ * @param size 每页条数
+ * @param enabled 是否只取在线 Agent
+ */
+export function listAgents(page = 0, size = 20, enabled?: boolean): Promise<Page<Agent>> {
+  const filter = enabled === undefined ? '' : `&enabled=${enabled}`
+  return http.get(`/api/agents?page=${page}&size=${size}${filter}`)
 }
 
 export function getAgent(id: number): Promise<Agent> {

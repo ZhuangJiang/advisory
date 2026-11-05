@@ -37,12 +37,24 @@ public class AgentController {
         this.service = service;
     }
 
-    /** 分页列出 Agent，任意已登录用户可见。 */
+    /**
+     * 分页列出 Agent，任意已登录用户可见。
+     *
+     * <p>对话页的「新建会话」只应列出在线 Agent，因此传 {@code enabled=true}：过滤在服务端与分页一起做，
+     * 客户端拿到的每一页都是可选集合，不会出现「先取一页再本地筛选」导致在线 Agent 被挤出首页的情况。
+     * 管理页不传该参数，仍能看到已下线的条目以便重新上线。</p>
+     *
+     * @param page    页码，从 0 开始
+     * @param size    每页条数
+     * @param enabled 是否按在线状态过滤；缺省表示不过滤
+     * @return 分页后的 Agent 列表
+     */
     @GetMapping("/api/agents")
     public ApiResponse<PageResponse<AgentResponse>> list(
             @RequestParam(name = "page", defaultValue = "0") int page,
-            @RequestParam(name = "size", defaultValue = "20") int size) {
-        return ApiResponse.ok(service.list(page, size));
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "enabled", required = false) Boolean enabled) {
+        return ApiResponse.ok(service.list(page, size, enabled));
     }
 
     /** 新建 Agent 并写入版本 1。 */

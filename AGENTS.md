@@ -79,12 +79,13 @@ powershell -File scripts/smoke.ps1
 
 ## Agent 模块要点
 
-这个模块的坑集中在「配置改了但历史会话不能变」，改动前先确认这四条：
+这个模块的坑集中在「配置改了但历史会话不能变」，改动前先确认这五条：
 
 1. **新建即版本 1**，不是「首次编辑才产生版本」。理由：第一次编辑前就已打开的会话指向版本 1，`resolveSnapshot(agentId, 1)` 必须能取到。
 2. **版本只追加**：每次成功 PATCH 在同一事务里更新 `agents` 当前行并追加 `current_version+1`；`agent_versions` 不更新、不删除。
 3. **会话锁定版本**：`conversations` 存 `agent_id + agent_version`，之后 Agent 怎么改都不影响已有会话。不要用「读当前配置」替换 `resolveSnapshot`。
-4. **试运行不落库**：`AgentTestRunService` 直接调 `ChatOrchestrator` 而非 `ChatService`（后者总会建会话）。它复用同一套编排、同一个 `StepSink.NOOP`，并允许对已停用的 Agent 试跑（`enabled` 管的是用户能否用它提问）。
+4. **试运行不落库**：`AgentTestRunService` 直接调 `ChatOrchestrator` 而非 `ChatService`（后者总会建会话）。它复用同一套编排、同一个 `StepSink.NOOP`，并允许对已停用的 Agent 试跑（`enabled` 管的是**能否新建会话**，已存在的会话仍按锁定版本继续可用）。
+5. **下线只在服务端过滤**：对话页拉可选 Agent 时传 `GET /api/agents?enabled=true`，过滤与分页在同一层完成；管理页不传该参数，否则已下线条目会消失、无法重新上线。不要改回「取一页再在前端 `.filter(a => a.enabled)`」——总量超过一页时会漏掉在线 Agent。
 
 写入前集中校验（全部 400 `VALIDATION_FAILED`）：`kbIds` 非空且存在；被引用知识库都配了向量模型**且是同一个**（写入 `agents.embedding_model_id`，运行时用来发现漂移）；`nodeScope` 的键是 `kbIds` 子集且节点属于对应库；`chatModelId` 能力为 `CHAT`。
 名称重复 409；删除仍有关联会话的 Agent 也是 409。

@@ -196,7 +196,7 @@ HTTP
 | `kb_nodes` | 节点树 | `path` 为 `ltree`，形如 `n1.n5.n9`；同级名唯一靠两条唯一索引 |
 | `documents` | 文档 | 状态机见 §7；软删即 `status='DELETED'` |
 | `chunks` | 分块与向量 | `embedding VECTOR(1024)`，HNSW 余弦索引 + `pg_trgm` GIN |
-| `agents` | Agent 当前配置 | `current_version`；`kb_ids`/`node_scope` 为 JSONB |
+| `agents` | Agent 当前配置 | `current_version`；`kb_ids`/`node_scope` 为 JSONB；`deleted_at` 非空表示已软删 |
 | `agent_versions` | 历史快照 | 只追加，`snapshot` 是 `AgentSnapshot` 的 JSON |
 | `conversations` | 会话 | 保存 `agent_id + agent_version`，**锁定版本** |
 | `messages` | 消息 | `status` 五态；`citations`/`token_usage` 为 JSONB |
@@ -360,6 +360,13 @@ ping      {}                             每 15s
 - `chatModelId` 存在且能力为 `CHAT`；`maxRounds` 1–6、`topK` 1–100、`temperature` 0–2。
 
 名称重复 409；删除仍有关联会话的 Agent 也是 409（先归档会话）。
+
+**上下线**只改 `agents.enabled`，不产生新版本。`enabled=false` 阻止**新建**会话，已经存在的会话仍按自己
+锁定的版本继续可用——下线影响的是「还能不能开始新对话」，不是「旧对话是否作废」。因此：
+
+- 对话页的可选列表用 `GET /api/agents?enabled=true`，过滤与分页在 SQL 里一起做；
+- 管理页不传该参数，仍能看到已下线的条目，否则无法重新上线；
+- 过滤不能放到客户端做：只取一页再 `.filter()`，一旦 Agent 总数超过一页就会漏掉在线项。
 
 ---
 

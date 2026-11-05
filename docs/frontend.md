@@ -205,7 +205,7 @@ ping       {}                            每 15s，前端忽略
 | `Login` | 账号密码登录；默认管理员首次登录会被导向改密 |
 | `ChangePassword` | 改密后旧令牌全部失效，需重新建立会话 |
 | `Home` | 落地页 |
-| `chat/ChatView` | 会话列表 + 消息流 + 推理面板 + 引用抽屉 |
+| `chat/ChatView` | 会话列表 + 消息流 + 推理面板 + 引用抽屉；「新对话」只列在线 Agent（`listAgents(0, 50, true)`，过滤由服务端完成） |
 | `knowledge/KnowledgeBaseList` | 知识库增删改、重建索引 |
 | `knowledge/KnowledgeBaseDetail` | 节点树 + 文档表 + 上传 |
 | `agents/AgentList` | Agent 列表、启停、删除 |

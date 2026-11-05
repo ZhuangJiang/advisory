@@ -65,15 +65,22 @@ public class AgentService {
 
     // ------------------------------------------------------------------ 读操作
 
-    /** 分页列出 Agent。 */
+    /**
+     * 分页列出 Agent。
+     *
+     * @param page    页码，从 0 开始
+     * @param size    每页条数，会被夹到 1–100
+     * @param enabled 是否按在线状态过滤；{@code null} 表示全部（管理页），{@code true} 用于对话页只取可选 Agent
+     * @return 分页结果
+     */
     @Transactional(readOnly = true)
-    public PageResponse<AgentResponse> list(int page, int size) {
+    public PageResponse<AgentResponse> list(int page, int size, Boolean enabled) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int pageIndex = Math.max(page, 0);
-        List<AgentResponse> items = agents.findPage(pageSize, pageIndex * pageSize).stream()
+        List<AgentResponse> items = agents.findPage(pageSize, pageIndex * pageSize, enabled).stream()
                 .map(AgentResponse::from)
                 .toList();
-        return PageResponse.of(items, pageIndex, pageSize, agents.count());
+        return PageResponse.of(items, pageIndex, pageSize, agents.count(enabled));
     }
 
     /** 读取 Agent 详情。 */

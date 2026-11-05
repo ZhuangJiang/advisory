@@ -35,6 +35,12 @@ const activeCitation = ref<Citation | null>(null)
 const activeCitationIndex = ref(0)
 const scroller = ref<HTMLElement | null>(null)
 
+/**
+ * 可选的 Agent：只保留在线状态为真的条目。
+ *
+ * 请求时已带 `enabled=true` 让服务端在分页内过滤，这里再兜一层是为了防止旧版后端或异常数据
+ * 把已下线的 Agent 带进「新建会话」下拉——下线意味着不能再开始新对话。
+ */
 const enabledAgents = computed(() => agents.value.filter((agent) => agent.enabled))
 
 const focused = computed(() => store.focusedMessage)
@@ -47,7 +53,7 @@ const readOnly = computed(() => {
 
 onMounted(async () => {
   try {
-    const page = await listAgents(0, 50)
+    const page = await listAgents(0, 50, true)
     agents.value = page.content
   } catch {
     agents.value = []

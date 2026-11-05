@@ -87,17 +87,40 @@ public class AgentRepository {
                 .findFirst();
     }
 
-    /** 分页读取未删除的 Agent，按主键升序。 */
-    public List<Agent> findPage(int limit, int offset) {
-        return jdbc.query("SELECT " + COLUMNS
-                        + " FROM agents WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?",
-                rowMapper, limit, offset);
+    /**
+     * 分页读取未删除的 Agent，按主键升序。
+     *
+     * <p>{@code enabled} 为 {@code null} 时不过滤在线状态（管理页要看到全部，包括已下线的）；
+     * 非空时在 SQL 层过滤——过滤必须和分页一起做，否则调用方只能拿一页再在本地筛，
+     * 一旦总量超过一页就会漏掉本该显示的在线 Agent。</p>
+     *
+     * @param limit   每页条数
+     * @param offset  偏移量
+     * @param enabled 是否只取在线（{@code true}）、只取下线（{@code false}）或不过滤（{@code null}）
+     * @return 该页的 Agent
+     */
+    public List<Agent> findPage(int limit, int offset, Boolean enabled) {
+        String sql = "SELECT " + COLUMNS + " FROM agents WHERE deleted_at IS NULL"
+                + (enabled == null ? "" : " AND enabled = ?")
+                + " ORDER BY id LIMIT ? OFFSET ?";
+        return enabled == null
+                ? jdbc.query(sql, rowMapper, limit, offset)
+                : jdbc.query(sql, rowMapper, enabled, limit, offset);
     }
 
-    /** 统计未删除的 Agent 总数，供分页使用。 */
-    public long count() {
-        Long total = jdbc.queryForObject(
-                "SELECT count(*) FROM agents WHERE deleted_at IS NULL", Long.class);
+    /**
+     * 统计未删除的 Agent 总数，供分页使用；{@code enabled} 的含义与 {@link #findPage} 一致。
+     *
+     * @param enabled 是否按在线状态过滤，{@code null} 表示不限制
+     * @return 满足条件的总数
+     */
+    public long count(Boolean enabled) {
+        Long total = enabled == null
+                ? jdbc.queryForObject(
+                        "SELECT count(*) FROM agents WHERE deleted_at IS NULL", Long.class)
+                : jdbc.queryForObject(
+                        "SELECT count(*) FROM agents WHERE deleted_at IS NULL AND enabled = ?",
+                        Long.class, enabled);
         return total == null ? 0 : total;
     }
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
+import { ElOption } from 'element-plus'
 import type { Citation, MessageDetail, MessageSummary } from '../src/api/chat'
 
 /**
@@ -126,11 +127,28 @@ vi.mock('../src/api/agents', async (importOriginal) => {
             currentVersion: 3,
             createdAt: '2026-01-01T00:00:00Z',
             updatedAt: '2026-01-01T00:00:00Z'
+          },
+          {
+            id: 6,
+            name: '已下线的助手',
+            description: null,
+            systemPrompt: '旧的提示词',
+            chatModelId: 9,
+            embeddingModelId: 1,
+            kbIds: [1],
+            nodeScope: {},
+            maxRounds: 3,
+            topK: 20,
+            temperature: 0.3,
+            enabled: false,
+            currentVersion: 1,
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z'
           }
         ],
         page: 0,
         size: 50,
-        total: 1,
+        total: 2,
         totalPages: 1
       })
     )
@@ -249,6 +267,21 @@ describe('chat view', () => {
     expect(wrapper.find('[data-test="read-only"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="send"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="question"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('asks the server for online agents only and never offers an offline one', async () => {
+    const { listAgents } = await import('../src/api/agents')
+    const wrapper = await mountChatView()
+
+    // 过滤必须交给服务端与分页一起做，不能只在本地筛一页
+    expect(vi.mocked(listAgents)).toHaveBeenCalledWith(0, 50, true)
+
+    // 对话框是惰性渲染的，先打开再检查选项
+    await wrapper.find('[data-test="new-conversation"]').trigger('click')
+    await flushPromises()
+
+    const options = wrapper.findAllComponents(ElOption)
+    expect(options.map((option) => option.props('label'))).toEqual(['知识助手（v3）'])
   })
 })
 
