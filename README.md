@@ -130,8 +130,11 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
 - **能调起来的前提**（缺一不可，两点都容易踩）：
   1. Agent 绑定的 chat 模型**支持 function calling**。`qwen2.5:7b`、`llama3.1:8b` 可以；
      `deepseek-r1` 不行——它接受 `tools` 参数却从不调用，会凭记忆编造天气（被调用计数校验拦下）。
-  2. 提供商地址对 backend 可达。本地 `mvn` 跑后端用 WSL 的 IP 或 `http://localhost:11434`；
-     **容器里跑后端**要改成 `http://host.docker.internal:11434`，Docker Desktop 到 WSL 虚拟网卡没有路由。
+  2. 提供商地址对 backend 可达。**推荐统一用 `http://host.docker.internal:11434`**：
+     容器内由 Docker DNS 解析到宿主网关；Windows 宿主由 hosts 记录解析到 `127.0.0.1`
+     （WSL2 的 localhost 端口转发），本地 `mvn` 与容器两种跑法共用同一个地址。
+     前提是 hosts 文件里 Docker Desktop 写入的 `host.docker.internal` 指向 `127.0.0.1`
+     （若指向旧 IP，请修正；备份在调整时已留）。
 - 端口约定：**后端服务 20001–20999**（`advisory-server` 20001，新增后端服务从 20002 顺延），
   **MCP 服务 21001–21999**（`weather-mcp` 21001，新增 MCP 服务从 21002 顺延）；基础设施保留默认
   （PostgreSQL 5432、MinIO 9000/9001、前端 80 / dev 5173）。

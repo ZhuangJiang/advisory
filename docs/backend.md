@@ -490,10 +490,11 @@ ping      {}                             每 15s
    `deepseek-r1` 不行——它接受 `tools` 参数却不调用，会直接按记忆编天气（被上面的调用计数校验拦下）。
    判断方法：直接问 Ollama，
    `POST /api/chat` 带 `tools`，响应里应出现 `message.tool_calls` 而不是纯文本。
-2. **backend 能访问到提供商地址**。本地 `mvn spring-boot:run` 用 WSL 的 IP（`http://172.25.32.90:11434`）
-   或 `http://localhost:11434`（WSL2 会把端口转发到 Windows）都行；**容器里必须换成
-   `http://host.docker.internal:11434`**——Docker Desktop 到 WSL 虚拟网卡没有路由，会报
-   `Host is unreachable`，表现成「工具作答失败，回退到知识库检索」。
+2. **backend 能访问到提供商地址**。统一用 `http://host.docker.internal:11434`：容器内由 Docker DNS
+   解析到宿主网关（直连 Docker Desktop 到 WSL 虚拟网卡没有路由，`172.25.x.x` 会报
+   `Host is unreachable`）；Windows 宿主由 hosts 里 Docker Desktop 的记录解析到 `127.0.0.1`
+   （WSL2 端口转发），本地 `mvn` 跑后端也用同一地址。hosts 记录指向失效 IP 时本地侧连不上，修正即可。
+   连不通的表现都是「工具作答失败，回退到知识库检索」。
 
 ---
 

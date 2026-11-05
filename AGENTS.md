@@ -162,8 +162,10 @@ powershell -File scripts/smoke.ps1
 - **模型必须支持 function calling**：`qwen2.5:7b` / `llama3.1:8b` 可用，`deepseek-r1` 不行（静默不调用）。
   换 Agent 的 chat 模型后，先确认 Ollama 的 `/api/chat` 响应里有 `message.tool_calls`。
 - **容器访问不到 WSL 里的 Ollama**：Docker Desktop 对 WSL 虚拟网卡没有路由，`172.25.x.x:11434` 会
-  `Host is unreachable`。容器场景把提供商 `base_url` 改成 `http://host.docker.internal:11434`
-  （Windows 侧 `localhost:11434` 靠 WSL2 转发才通，容器内不能用它）。本地 `mvn` 跑后端则两种地址都行。
+  `Host is unreachable`。**统一解法：提供商 `base_url` 用 `http://host.docker.internal:11434`**——
+  容器内 Docker DNS 解析到宿主网关；Windows 宿主靠 hosts 里 Docker Desktop 写的
+  `host.docker.internal → 127.0.0.1` 记录（WSL2 localhost 转发），本地 `mvn` 与容器共用。
+  hosts 里那条记录指向失效 IP 时，本地侧会连不上（症状：`Connection refused`/超时），修正即可。
 
 ## 验证清单
 
