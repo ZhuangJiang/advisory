@@ -42,6 +42,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -244,10 +245,41 @@ class DocumentUploadTest extends IntegrationTestBase {
                 "SELECT count(*) FROM chunks WHERE document_id = ?", Integer.class, documentId);
         assertEquals(0, leftoverChunks, "soft delete must remove the document's chunks");
         assertThrows(Exception.class, () -> minioClient().statObject(StatObjectArgs.builder()
-                        .bucket(MINIO_BUCKET)
+                        .bucket(storageService.bucketName(kbId))
                         .object(presigned.objectKey())
                         .build()),
                 "soft delete must remove the MinIO object");
+    }
+
+    /**
+     * 一库一桶：两个知识库上传同名文件时，各自落在自己的桶里，跨库连对象都查不到。
+     *
+     * <p>共用一个大桶时，隔离全靠对象键里的 {@code kb/<id>/} 前缀——任何一处漏拼就会互相覆盖。
+     * 桶是存储层的硬边界，这里钉住它确实生效。</p>
+     */
+    @Test
+    void eachKnowledgeBaseStoresObjectsInItsOwnBucket() throws Exception {
+        long kbA = createKb();
+        long kbB = createKb();
+        byte[] bodyA = "content of A".getBytes(StandardCharsets.UTF_8);
+        byte[] bodyB = "content of B".getBytes(StandardCharsets.UTF_8);
+
+        Presigned a = presign(kbA, null, "same.txt", bodyA.length);
+        putBytes(a.uploadUrl(), bodyA);
+        Presigned b = presign(kbB, null, "same.txt", bodyB.length);
+        putBytes(b.uploadUrl(), bodyB);
+
+        assertNotEquals(storageService.bucketName(kbA), storageService.bucketName(kbB),
+                "两个知识库必须使用不同的桶");
+        assertTrue(storageService.stat(kbA, a.objectKey()).isPresent());
+        assertTrue(storageService.stat(kbB, b.objectKey()).isPresent());
+        // 把 B 的键拿到 A 的桶里查：必须查不到，否则说明两个库仍落在同一个桶。
+        assertTrue(storageService.stat(kbA, b.objectKey()).isEmpty(),
+                "对象键属于哪个知识库，就只能在该知识库的桶里找到");
+        try (var in = storageService.getObject(kbA, a.objectKey())) {
+            assertEquals("content of A", new String(in.readAllBytes(), StandardCharsets.UTF_8),
+                    "同名文件不能覆盖另一个知识库的内容");
+        }
     }
 
     @Test
@@ -384,7 +416,7 @@ class DocumentUploadTest extends IntegrationTestBase {
         String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/failing.txt";
         long documentId = insertDocumentRow(kbId, nodeId, "failing.txt", objectKey, 3);
         // 自 Task 7 起，重试会真的去解析已存对象，因此 MinIO 里必须有这个上传对象，重试才可能到 READY。
-        storageService.putText(objectKey, "retry body after the simulated failure");
+        storageService.putText(kbId, objectKey, "retry body after the simulated failure");
 
         String function = "fail_ingest_" + UUID.randomUUID().toString().replace("-", "");
         String trigger = "trg_" + function;

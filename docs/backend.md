@@ -21,6 +21,7 @@ com.advisory
 ├── common/                    跨模块基础设施
 │   ├── api/                   ApiResponse、PageResponse（统一信封）
 │   ├── config/                MinioConfig（双客户端 + 建桶）
+│   ├── jdbc/                  JdbcRepository（JDBC 仓储基类：共享 JdbcTemplate/ObjectMapper + jsonb 助手）
 │   └── error/                 ErrorCode、AppException、GlobalExceptionHandler
 ├── auth/                      登录、刷新轮换、强制改密、用户管理
 │   ├── security/              SecurityConfig、JwtAuthFilter、CurrentUser 解析器、JSON 401/403
@@ -49,6 +50,7 @@ com.advisory
 | 配置类实体（User、Agent、Model…）用 JPA | 结构稳定、以 CRUD 为主，`ddl-auto=validate` 保证实体与迁移一致 |
 | 模型客户端不用 Spring AI 自动配置，按 `models` 行手工构造 | 一个进程要同时对接多个提供商；自动配置只能装一个 |
 | 没有 vector-store bean | 向量检索是 `RetrievalJdbcRepository` 里的一条 SQL，Spring AI 只负责算向量 |
+| JDBC 仓储统一继承 `common.jdbc.JdbcRepository` | `JdbcTemplate` 与 `ObjectMapper` 是容器单例，没必要每个仓储各声明一份构造参数；基类同时统一了 jsonb 的两种失败语义（持久化路径抛、展示性数据降级） |
 
 ---
 
@@ -71,7 +73,8 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 1. Flyway 执行 `db/migration/`，V1 建全量表与索引；
 2. Hibernate 用 `validate` 校验实体与表结构，不一致直接启动失败（这是有意的，别改成 `update`）；
 3. `BootstrapAdminInitializer` 在无管理员时建 `ADMIN_USERNAME`/`ADMIN_PASSWORD`，并置 `must_change_password=true`；
-4. `MinioConfig` 尝试建桶，**失败只记 WARN 不阻断启动**（本地没起 MinIO 也能把后端跑起来看别的）；
+4. `MinioConfig` 尝试建**共享桶**（只作历史对象的迁移源，见 §7），失败只记 WARN 不阻断启动；
+   知识库专属桶在 `ApplicationReadyEvent` 时由 `KnowledgeBaseService#ensureBuckets` 逐个补齐；
 5. `DocumentIngestWorker` 的 `ApplicationRunner` 把上次进程遗留的中间态文档重置为 `PENDING` 并重新入队。
 
 健康检查：`GET /actuator/health`（`health,info,metrics` 已暴露）。这个路径在安全链里放行。
@@ -90,7 +93,7 @@ npm --prefix frontend run dev        # 5173，/api 代理到 8080
 | `MINIO_ENDPOINT` | `http://localhost:9000` | 服务端访问 MinIO 的地址（容器内是 `http://minio:9000`） |
 | `MINIO_PUBLIC_ENDPOINT` | 空 | **签名用的地址**，必须浏览器可达；留空则回落到 `MINIO_ENDPOINT` |
 | `MINIO_REGION` | `us-east-1` | 写死，避免签名前先向 endpoint 发一次 `?location=` 探测 |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` | `minioadmin` / `minioadmin` / `advisory` | 凭证与桶 |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` | `minioadmin` / `minioadmin` / `advisory` | 凭证与桶名前缀（知识库桶为 `<前缀>-kb-<id>`） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin` | 仅首次启动、库中无管理员时生效 |
 | `app.embedding.dimension` | `1024` | 固定维度，改它等于换掉整个向量契约 |
 
@@ -226,8 +229,26 @@ HTTP
 3. POST /api/documents           → 登记元数据，触发入库
 ```
 
-应用从不自己创建桶：桶缺失属于配置错误，应该在部署时暴露（`deploy/init-bucket.sh` 与启动时的
-`MinioConfig#ensureBucket` 双保险，都是幂等的）。
+**一库一桶**：每个知识库写自己的桶 `<MINIO_BUCKET>-kb-<id>`（如 `advisory-kb-12`），而不是共用一个大桶。
+对象键仍是 `kb/<id>/<uuid>/<文件名>`，但隔离不再依赖前缀拼接——桶是存储层的硬边界，删库时可以整桶清空。
+
+- 建库时就建桶，**建桶失败会让本次建库回滚**（存储没准备好时应当立刻失败，而不是等到上传）；
+- `presign` 前再幂等补建一次，覆盖「启动时 MinIO 不可达、之后恢复」以及存量知识库；
+- `KnowledgeBaseService#ensureBuckets` 在启动完成时为所有既有知识库补桶；
+- 删库时 `deleteBucketQuietly` 在**事务提交后**清空并删除桶，失败只记 WARN——数据库是事实来源，
+  不能因为 MinIO 抖一下就删不掉知识库。
+
+从旧版本（共用一个桶）升级时，按 `kb/<id>/` 一级目录把对象搬到各自的桶：
+
+```bash
+PREFIX=advisory
+for id in $(mc ls "local/$PREFIX/kb/" | awk '{print $NF}' | tr -d '/'); do
+  mc mb --ignore-existing "local/$PREFIX-kb-$id"
+  mc mirror "local/$PREFIX/kb/$id" "local/$PREFIX-kb-$id/kb/$id"
+done
+```
+
+共享桶与 `deploy/init-bucket.sh` 仍然保留，就是为了这条迁移路径有稳定的源。
 
 ### 状态机
 
@@ -386,7 +407,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/pom.xml test` → **197 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/pom.xml test` → **207 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 
 | 类型 | 位置 | 做法 |
 |---|---|---|

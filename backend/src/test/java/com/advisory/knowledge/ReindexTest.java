@@ -327,7 +327,7 @@ class ReindexTest extends IntegrationTestBase {
 
     private long makeDocument(long kbId, String content) {
         String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/reindex-doc.md";
-        storage.putText(objectKey, content);
+        storage.putText(kbId, objectKey, content);
         Long id = jdbcTemplate.queryForObject("""
                 INSERT INTO documents (kb_id, filename, object_key, size, status)
                 VALUES (?, ?, ?, ?, 'PENDING')
@@ -378,6 +378,9 @@ class ReindexTest extends IntegrationTestBase {
         if (id == null) {
             throw new IllegalStateException("insert did not return an id");
         }
+        // 直接建行绕过了接口层，因此也要手动补上知识库专属桶：一库一桶之后，
+        // 没有桶的库第一次写对象就会 NoSuchBucket。
+        storage.createBucket(id);
         createdKbIds.add(id);
         return id;
     }

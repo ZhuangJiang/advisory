@@ -20,8 +20,10 @@ import org.springframework.context.annotation.Primary;
  * 这个拆分正是容器化部署后上传能跑通的原因。预签名是纯本地计算（不发请求），因此公开客户端
  * 无需真正解析公网域名。</p>
  *
- * <p>启动时会按需创建存储桶，避免新环境第一次上传就撞上 {@code NoSuchBucket}。MinIO 暂时不可达
- * 不能阻断应用启动（上下文测试并不保证有 MinIO），故桶检查失败只打警告，真正的错误留给第一次上传暴露。</p>
+ * <p>业务对象一律写入每个知识库自己的桶（{@code <前缀>-kb-<id>}，见 {@code StorageService}）。
+ * 这里仍然会按需创建那个<em>共享</em>桶，它只作为历史版本的迁移来源存在——升级前所有文档都放在
+ * {@code kb/<id>/...} 前缀下，保留这个桶才能把老对象搬到新桶而不必回滚。MinIO 暂时不可达不能阻断
+ * 应用启动（上下文测试并不保证有 MinIO），故桶检查失败只打警告，真正的错误留给第一次上传暴露。</p>
  */
 @Configuration
 public class MinioConfig {
@@ -76,10 +78,13 @@ public class MinioConfig {
     }
 
     /**
-     * 启动时确保存储桶存在；失败只记警告，不阻断启动。
+     * 启动时确保历史共享桶存在；失败只记警告，不阻断启动。
+     *
+     * <p>新对象不再写入这里，但升级前上传的文件仍在其中，迁移脚本需要一个稳定的源桶。
+     * 知识库专属桶由 {@code KnowledgeBaseService#ensureBuckets} 在启动完成后补齐。</p>
      *
      * @param minioClient 内部客户端
-     * @param bucket      桶名
+     * @param bucket      共享桶名，作为知识库桶名的前缀
      * @return 启动回调
      */
     @Bean

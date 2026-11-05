@@ -43,7 +43,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 197 用例，需要 Docker（Testcontainers 起 PG/MinIO）
+mvn -f backend/pom.xml test                 # 207 用例，需要 Docker（Testcontainers 起 PG/MinIO）
 
 # 前端
 npm --prefix frontend run test              # 37 用例（vitest + jsdom）
@@ -69,7 +69,7 @@ powershell -File scripts/smoke.ps1
 - **推理步骤是主数据**，SSE 只是实时通道：写入会话/步骤的代码路径不得依赖客户端在线。
 - **会话越权 404，权限不足 403**。ADMIN 可读全部会话（审计），但**不能**替用户提问（`ChatService.start` 显式 403）。
 - **改密/禁用即吊销**该用户全部 refresh token；初始化管理员与新建/重置密码的用户 `mustChangePassword=true`，改密前只允许 `me` / `change-password` / `logout`。
-- **上传必须走 presign → PUT → 登记**，PUT 不能带 `Authorization`（MinIO 校验签名）。桶由应用启动时自动创建，compose 里另有 `deploy/init-bucket.sh` 提前建桶（幂等，两者不冲突）。
+- **上传必须走 presign → PUT → 登记**，PUT 不能带 `Authorization`（MinIO 校验签名）。**一个知识库一个桶**（`<MINIO_BUCKET>-kb-<id>`）：建库时创建，启动时为存量库补齐，`presign` 前再幂等补一次；删库时在事务提交后清桶。共享桶 `<MINIO_BUCKET>` 只作为旧数据的迁移源保留。
 - **预签名必须用公网地址**：SigV4 签名覆盖 host，`app.minio.endpoint`（`minio:9000`）签出的 URL 浏览器用不了，故有 `MINIO_PUBLIC_ENDPOINT` / `app.minio.public-endpoint`；签名客户端固定 region 以避免向公网地址发起 location 查询。
 - **embedding 维度固定 1024**，一个 Agent 引用的多个知识库必须同一 embedding 模型。
 - **Flyway V1–V3 已发布并应用，一个字节都不要改**（包括注释）：改了会变 checksum，既有环境启动即 `validate` 失败。变更一律新建 V4+。

@@ -184,7 +184,7 @@ public class DocumentIngestWorker implements ApplicationRunner {
         }
         submit(() -> {
             List<Map<String, Object>> rows = jdbc.queryForList(
-                    "SELECT status, object_key, parsed_key FROM documents WHERE id = ?", documentId);
+                    "SELECT status, kb_id, object_key, parsed_key FROM documents WHERE id = ?", documentId);
             if (rows.isEmpty()) {
                 log.info("Document {} is gone; nothing to clean up", documentId);
                 return;
@@ -198,8 +198,9 @@ public class DocumentIngestWorker implements ApplicationRunner {
                     DELETE FROM chunks WHERE document_id = ?
                       AND EXISTS (SELECT 1 FROM documents d WHERE d.id = ? AND d.status = 'DELETED')
                     """, documentId, documentId);
-            removeQuietly(documentId, (String) row.get("object_key"));
-            removeQuietly(documentId, (String) row.get("parsed_key"));
+            long kbId = ((Number) row.get("kb_id")).longValue();
+            removeQuietly(documentId, kbId, (String) row.get("object_key"));
+            removeQuietly(documentId, kbId, (String) row.get("parsed_key"));
         }, "clean up document " + documentId);
     }
 
@@ -332,18 +333,18 @@ public class DocumentIngestWorker implements ApplicationRunner {
 
             // ------------------------------------------------ 解析
             IngestRow row = loadIngestRow(documentId);
-            if (storage.stat(row.objectKey()).isEmpty()) {
+            if (storage.stat(row.kbId(), row.objectKey()).isEmpty()) {
                 throw new AppException(ErrorCode.VALIDATION_FAILED,
                         "无法解析该文件：存储中找不到已上传的文件对象 " + row.objectKey());
             }
             ParsedDocument parsed;
-            try (InputStream in = storage.getObject(row.objectKey())) {
+            try (InputStream in = storage.getObject(row.kbId(), row.objectKey())) {
                 parsed = parser.parse(in, row.filename());
             }
             // parsed_key 每次运行都覆盖写：它是恢复与排查问题时的产物（§145/§154）。
             String parsedKey = parsedKeyFor(row.objectKey());
             String markdown = parsed.markdown();
-            storage.putText(parsedKey, markdown);
+            storage.putText(row.kbId(), parsedKey, markdown);
             jdbc.update("UPDATE documents SET parsed_key = ? WHERE id = ?", parsedKey, documentId);
             if (!transition(documentId, DocumentStatus.PARSING, DocumentStatus.CHUNKING, null)) {
                 return;
@@ -455,12 +456,19 @@ public class DocumentIngestWorker implements ApplicationRunner {
         return statuses.isEmpty() ? null : DocumentStatus.from(statuses.get(0));
     }
 
-    private void removeQuietly(long documentId, String objectKey) {
+    /**
+     * 删除单个存储对象；失败只记警告，不影响另一个对象（原始文件或解析产物）的清理。
+     *
+     * @param documentId 文档主键，仅用于日志
+     * @param kbId       知识库主键，决定对象所在的桶
+     * @param objectKey  对象键
+     */
+    private void removeQuietly(long documentId, long kbId, String objectKey) {
         if (objectKey == null || objectKey.isBlank()) {
             return;
         }
         try {
-            storage.remove(objectKey);
+            storage.remove(kbId, objectKey);
         } catch (RuntimeException e) {
             // 一个对象不存在，不应妨碍另一个（原始对象或解析产物）被删除。
             log.warn("Could not remove object {} of document {}: {}", objectKey, documentId, e.toString());

@@ -305,7 +305,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
         assertTrue(parsedKey.startsWith("kb/" + kbId + "/"), "parsed_key must sit next to the raw object");
         assertTrue(parsedKey.endsWith("/parsed.md"));
 
-        byte[] stored = storage.getObject(parsedKey).readAllBytes();
+        byte[] stored = storage.getObject(kbId, parsedKey).readAllBytes();
         assertEquals(markdown, new String(stored, StandardCharsets.UTF_8),
                 "the stored parsed Markdown must be the parser output");
     }
@@ -330,7 +330,7 @@ class EmbeddingWriteTest extends IntegrationTestBase {
 
     private String uploadObject(long kbId, String content) {
         String key = "kb/" + kbId + "/" + UUID.randomUUID() + "/doc.md";
-        storage.putText(key, content);
+        storage.putText(kbId, key, content);
         return key;
     }
 

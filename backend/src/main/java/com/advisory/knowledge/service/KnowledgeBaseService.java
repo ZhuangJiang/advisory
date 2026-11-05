@@ -12,10 +12,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.List;
@@ -79,15 +83,35 @@ public class KnowledgeBaseService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final DocumentIngestWorker worker;
+    private final StorageService storage;
 
     public KnowledgeBaseService(KnowledgeBaseRepository repository,
                                 JdbcTemplate jdbc,
                                 ObjectMapper objectMapper,
-                                DocumentIngestWorker worker) {
+                                DocumentIngestWorker worker,
+                                StorageService storage) {
         this.repository = repository;
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.worker = worker;
+        this.storage = storage;
+    }
+
+    /**
+     * 启动时为每个既有知识库补齐专属存储桶。
+     *
+     * <p>「一库一桶」上线后，存量知识库的桶不会自己出现；少了这一步，老库要等到第一次上传才报
+     * {@code NoSuchBucket}。MinIO 暂不可达时只记警告——与启动期的既有约定一致，不阻断应用启动。</p>
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void ensureBuckets() {
+        for (KnowledgeBase kb : repository.findAll()) {
+            try {
+                storage.createBucket(kb.getId());
+            } catch (RuntimeException e) {
+                log.warn("Could not ensure bucket of knowledge base {}: {}", kb.getId(), e.toString());
+            }
+        }
     }
 
     /** 新建知识库。 */
@@ -100,6 +124,9 @@ public class KnowledgeBaseService {
         kb.setChunkConfig(normalizeChunkConfig(body.chunkConfig()));
         kb.setCreatedBy(createdBy);
         kb = repository.save(kb);
+        // 建桶失败会让本次建库回滚：存储没准备好时，让用户拿到明确的 500，而不是等到上传才发现。
+        // 万一是 MinIO 侧建好了而事务回滚，留下的只是一个空桶，代价可以接受。
+        storage.createBucket(kb.getId());
         return KnowledgeBaseResponse.from(kb);
     }
 
@@ -147,7 +174,15 @@ public class KnowledgeBaseService {
         if (references != null && references > 0) {
             throw new AppException(ErrorCode.KB_IN_USE, "知识库已被某个 Agent 引用");
         }
+        long kbId = kb.getId();
         repository.delete(kb);
+        // 桶的清理放在提交之后：若事务回滚，桶必须还在，否则数据行还在、文件却已经没了。
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                storage.deleteBucketQuietly(kbId);
+            }
+        });
     }
 
     /** 分页列出知识库并算出现有文档数。 */

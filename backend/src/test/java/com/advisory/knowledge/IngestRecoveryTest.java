@@ -144,7 +144,7 @@ class IngestRecoveryTest extends IntegrationTestBase {
         String objectKey = "kb/" + kbId + "/" + UUID.randomUUID() + "/" + name;
         // 自 Task 7 起，流水线会解析已存储的对象，因此只有上传物确实存在于 MinIO 中，
         // 恢复后的文档才可能走到 READY。
-        storageService.putText(objectKey, "recovery payload for " + name);
+        storageService.putText(kbId, objectKey, "recovery payload for " + name);
         Long id = jdbcTemplate.queryForObject("""
                 INSERT INTO documents (kb_id, filename, object_key, size, status)
                 VALUES (?, ?, ?, 0, ?)

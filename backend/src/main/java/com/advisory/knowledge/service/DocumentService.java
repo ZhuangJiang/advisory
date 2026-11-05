@@ -110,8 +110,10 @@ public class DocumentService {
         String filename = validateFilename(request.filename());
         validateSize(request.size());
 
+        // 幂等建桶：既覆盖「启动时 MinIO 不可达、之后恢复」的情况，也让旧知识库无需人工补桶。
+        storage.createBucket(kbId);
         String objectKey = newObjectKey(kbId, filename);
-        String uploadUrl = storage.presignPut(objectKey, PRESIGN_TTL);
+        String uploadUrl = storage.presignPut(kbId, objectKey, PRESIGN_TTL);
         return new PresignResponse(uploadUrl, objectKey, PRESIGN_TTL.toSeconds());
     }
 
@@ -137,7 +139,7 @@ public class DocumentService {
             return replay(existing);
         }
 
-        long actualSize = storage.stat(objectKey)
+        long actualSize = storage.stat(kbId, objectKey)
                 .orElseThrow(() -> new AppException(ErrorCode.VALIDATION_FAILED,
                         "未找到已上传的文件，请先上传再创建文档"))
                 .size();
