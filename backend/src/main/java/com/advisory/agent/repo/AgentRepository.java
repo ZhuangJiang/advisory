@@ -58,9 +58,31 @@ public class AgentRepository {
         this.objectMapper = objectMapper;
     }
 
-    /** 按主键读取 Agent，含 jsonb 列的解析。 */
+    /**
+     * 按主键读取 Agent，含 jsonb 列的解析。
+     *
+     * <p>刻意不过滤 {@code deleted_at}：已软删 Agent 的历史会话仍要按锁定版本重放，
+     * {@code resolveSnapshot} 必须能读到这一行。管理操作请用 {@link #findActiveById(long)}。</p>
+     */
     public Optional<Agent> findById(long id) {
         return jdbc.query("SELECT " + COLUMNS + " FROM agents WHERE id = ?", rowMapper, id)
+                .stream()
+                .findFirst();
+    }
+
+    /** 读取未删除的 Agent；管理操作与新建会话都走这里。 */
+    public Optional<Agent> findActiveById(long id) {
+        return jdbc.query("SELECT " + COLUMNS + " FROM agents WHERE id = ? AND deleted_at IS NULL",
+                        rowMapper, id)
+                .stream()
+                .findFirst();
+    }
+
+    /** 在事务期间锁住未删除的行，供状态切换与删除使用。 */
+    public Optional<Agent> findActiveByIdForUpdate(long id) {
+        return jdbc.query("SELECT " + COLUMNS
+                        + " FROM agents WHERE id = ? AND deleted_at IS NULL FOR UPDATE",
+                        rowMapper, id)
                 .stream()
                 .findFirst();
     }
@@ -76,29 +98,33 @@ public class AgentRepository {
                 .findFirst();
     }
 
-    /** 分页读取 Agent，按主键升序。 */
+    /** 分页读取未删除的 Agent，按主键升序。 */
     public List<Agent> findPage(int limit, int offset) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM agents ORDER BY id LIMIT ? OFFSET ?",
+        return jdbc.query("SELECT " + COLUMNS
+                        + " FROM agents WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?",
                 rowMapper, limit, offset);
     }
 
-    /** 统计 Agent 总数，供分页使用。 */
+    /** 统计未删除的 Agent 总数，供分页使用。 */
     public long count() {
-        Long total = jdbc.queryForObject("SELECT count(*) FROM agents", Long.class);
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM agents WHERE deleted_at IS NULL", Long.class);
         return total == null ? 0 : total;
     }
 
-    /** 判断名称是否已被占用。 */
+    /** 判断名称是否已被未删除的 Agent 占用。 */
     public boolean existsByName(String name) {
         Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM agents WHERE name = ?", Integer.class, name);
+                "SELECT count(*) FROM agents WHERE name = ? AND deleted_at IS NULL",
+                Integer.class, name);
         return count != null && count > 0;
     }
 
-    /** 判断名称是否被其他 Agent 占用，更新时使用。 */
+    /** 判断名称是否被其他未删除的 Agent 占用，更新时使用。 */
     public boolean existsByNameExcluding(String name, long excludedId) {
         Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM agents WHERE name = ? AND id <> ?", Integer.class, name, excludedId);
+                "SELECT count(*) FROM agents WHERE name = ? AND id <> ? AND deleted_at IS NULL",
+                Integer.class, name, excludedId);
         return count != null && count > 0;
     }
 

@@ -1,5 +1,6 @@
 package com.advisory.agent;
 
+import com.advisory.agent.repo.AgentRepository;
 import com.advisory.agent.service.AgentService;
 import com.advisory.auth.domain.User;
 import com.advisory.auth.domain.UserRole;
@@ -24,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -60,6 +62,9 @@ class AgentConfigTest extends IntegrationTestBase {
 
     @Autowired
     private AgentService agentService;
+
+    @Autowired
+    private AgentRepository agentRepository;
 
     private long providerId;
     private long chatModelId;
@@ -249,7 +254,33 @@ class AgentConfigTest extends IntegrationTestBase {
                 "the snapshot carries the default maxRounds = 3");
     }
 
-    // ------------------------------------------------------------------ 4. 数值范围校验
+    // ------------------------------------------------------------------ 4. 软删
+
+    @Test
+    void softDeletedAgentsAreHiddenFromReadsAndReleaseTheirName() throws Exception {
+        long kbId = createKb(firstEmbeddingModelId);
+        String name = "agent10-a-" + UUID.randomUUID();
+        long agentId = createAgent(name, List.of(kbId), Map.of(), "prompt");
+
+        assertTrue(agentRepository.findActiveById(agentId).isPresent());
+        jdbc.update("UPDATE agents SET deleted_at = now() WHERE id = ?", agentId);
+
+        assertTrue(agentRepository.findActiveById(agentId).isEmpty());
+        assertTrue(agentRepository.findById(agentId).isPresent(),
+                "历史会话重放仍需要读到已删除的行");
+
+        String listed = mockMvc.perform(get("/api/agents")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> ids = JsonPath.read(listed, "$.data.content[*].id");
+        assertFalse(ids.contains((int) agentId));
+
+        long reused = createAgent(name, List.of(kbId), Map.of(), "prompt again");
+        assertTrue(reused > 0, "软删后名称必须可以复用");
+    }
+
+    // ------------------------------------------------------------------ 5. 数值范围校验
 
     @Test
     void rejectsInvalidConfigValues() throws Exception {
