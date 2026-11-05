@@ -117,7 +117,8 @@ public class StorageService {
             List<DeleteObject> targets = new ArrayList<>();
             for (Result<Item> result : minioClient.listObjects(
                     ListObjectsArgs.builder().bucket(bucket).recursive(true).build())) {
-                targets.add(new DeleteObject(bucket, result.get().objectName()));
+                // DeleteObject 的第二个参数是版本号，不是桶名；桶由 removeObjects 的 builder 指定。
+                targets.add(new DeleteObject(result.get().objectName()));
             }
             if (!targets.isEmpty()) {
                 // removeObjects 是惰性的：不迭代返回结果，删除请求根本不会发出。

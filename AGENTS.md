@@ -43,7 +43,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 207 用例，需要 Docker（Testcontainers 起 PG/MinIO）
+mvn -f backend/pom.xml test                 # 208 用例，需要 Docker（Testcontainers 起 PG/MinIO）
 
 # 前端
 npm --prefix frontend run test              # 37 用例（vitest + jsdom）

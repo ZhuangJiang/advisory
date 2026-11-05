@@ -11,6 +11,7 @@ import com.advisory.provider.service.CryptoService;
 import com.advisory.support.EmbeddingModelFixture;
 import com.advisory.support.IntegrationTestBase;
 import com.jayway.jsonpath.JsonPath;
+import io.minio.BucketExistsArgs;
 import io.minio.StatObjectArgs;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,6 +112,8 @@ class DocumentUploadTest extends IntegrationTestBase {
         for (Long kbId : createdKbIds) {
             jdbcTemplate.update("DELETE FROM documents WHERE kb_id = ?", kbId);
             jdbcTemplate.update("DELETE FROM knowledge_bases WHERE id = ?", kbId);
+            // 直接删行绕过了接口层，专属桶不会自动清掉；测试容器的 MinIO 跨类复用，留着会越积越多。
+            storageService.deleteBucketQuietly(kbId);
         }
         createdKbIds.clear();
         if (embeddingFixture != null) {
@@ -280,6 +283,33 @@ class DocumentUploadTest extends IntegrationTestBase {
             assertEquals("content of A", new String(in.readAllBytes(), StandardCharsets.UTF_8),
                     "同名文件不能覆盖另一个知识库的内容");
         }
+    }
+
+    /**
+     * 建库即建桶，删库即清桶：桶是知识库在存储层的生命周期，不能只建不拆。
+     *
+     * <p>删库的桶清理发生在事务提交之后，所以这里能在请求返回时就断言桶已消失；
+     * 失败也不会回滚删除——桶只是数据库事实的投影。</p>
+     */
+    @Test
+    void deletingKnowledgeBaseRemovesItsBucket() throws Exception {
+        long kbId = createKb();
+        String bucket = storageService.bucketName(kbId);
+        assertTrue(minioClient().bucketExists(BucketExistsArgs.builder().bucket(bucket).build()),
+                "建库时就必须建好专属桶");
+
+        byte[] content = "to be removed".getBytes(StandardCharsets.UTF_8);
+        Presigned presigned = presign(kbId, null, "gone.txt", content.length);
+        putBytes(presigned.uploadUrl(), content);
+        assertTrue(storageService.stat(kbId, presigned.objectKey()).isPresent());
+
+        mockMvc.perform(delete("/api/knowledge-bases/" + kbId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
+
+        assertFalse(minioClient().bucketExists(BucketExistsArgs.builder().bucket(bucket).build()),
+                "删库后桶必须被清空并删除，否则文件会留在没有主的桶里");
     }
 
     @Test

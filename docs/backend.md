@@ -407,7 +407,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/pom.xml test` → **207 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/pom.xml test` → **208 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 
 | 类型 | 位置 | 做法 |
 |---|---|---|
