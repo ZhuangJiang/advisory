@@ -46,7 +46,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 269 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 11 用例
 mvn -f backend/advisory-server/pom.xml test       # 只跑主服务，需要 Docker（Testcontainers 起 PG/MinIO）
 mvn -f backend/mcp-server/weather-mcp/pom.xml test # 只跑天气 MCP，无需 Docker
 
@@ -150,6 +150,8 @@ powershell -File scripts/smoke.ps1
   `JavaSDKMCPClient_` 前缀，进模型上下文与推理摘要）。接入第二个 MCP 服务出现重名时，再按服务别名加。
 - **只有工具执行失败才 `invalidate()`**：模型侧故障（401、模型不支持 function calling）与 MCP 健康无关，
   拿它去重连只会让每个问题都多一次握手。
+- **必须校验「工具真的被调用了」**：deepseek-r1 这类模型接受 `tools` 参数却从不调用，会凭记忆编天气。
+  网关统计回调次数，为 0 就抛错让编排器回退——编造的实时数据比「查不到」更糟。
 - 联调用例 `McpToolRegistryLiveTest` 靠 `WEATHER_MCP_URL` 环境变量开启，默认跳过；它真的会打一次
   `tools/call`，不是只握手。
 
@@ -157,7 +159,7 @@ powershell -File scripts/smoke.ps1
 
 改完代码按影响面选，**不要只看编译通过**：
 
-- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 269 用例 + weather-mcp 11 用例，必须全绿）
+- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 271 用例 + weather-mcp 11 用例，必须全绿）
 - 只改 MCP 服务：`mvn -f backend/mcp-server/weather-mcp/pom.xml test`（无需 Docker，秒级）
 - 前端逻辑：`npm --prefix frontend run test` 与 `npm --prefix frontend run build`
 - 动了安全链 / SSE / 预签名 / 健康检查：必须 `docker compose up -d --build` 后在真容器里验一遍

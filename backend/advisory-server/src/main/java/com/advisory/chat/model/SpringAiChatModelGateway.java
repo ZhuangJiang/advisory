@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 生产环境使用的 {@link ChatModelGateway}：按 {@code models} 行构造 Spring AI {@code ChatModel}。
@@ -85,9 +86,15 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
         }
 
         ChatClientFactory.ChatClient client = clientFactory.forChat(modelId, temperature);
+        // 数一下工具到底被调了几次：有些模型（如 deepseek-r1）会接受 tools 参数却从不调用，
+        // 然后凭记忆编一段天气。这种答案比「查不到」更糟，因此没调用就不算工具作答。
+        AtomicInteger invocations = new AtomicInteger();
+        List<ToolCallback> countingTools = tools.stream()
+                .map(tool -> (ToolCallback) new CountingToolCallback(tool, invocations))
+                .toList();
         ChatClient chatClient = ChatClient.builder(client.model())
                 .defaultOptions(client.options())
-                .defaultToolCallbacks(tools)
+                .defaultToolCallbacks(countingTools)
                 .build();
         try {
             String text = chatClient.prompt()
@@ -97,6 +104,10 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
                     .content();
             if (text == null || text.isBlank()) {
                 throw new AppException(ErrorCode.INTERNAL_ERROR, "模型返回了空响应");
+            }
+            if (invocations.get() == 0) {
+                throw new AppException(ErrorCode.INTERNAL_ERROR,
+                        "模型没有调用任何工具，无法获得实时数据");
             }
             return text;
         } catch (AppException e) {
@@ -108,6 +119,22 @@ public class SpringAiChatModelGateway implements ChatModelGateway {
             String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             throw new AppException(ErrorCode.INTERNAL_ERROR,
                     "工具调用失败 (model id=" + modelId + "): " + truncate(reason));
+        }
+    }
+
+    /** 只用来统计调用次数，其余行为原样透传。 */
+    private record CountingToolCallback(ToolCallback delegate, AtomicInteger invocations)
+            implements ToolCallback {
+
+        @Override
+        public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
+            return delegate.getToolDefinition();
+        }
+
+        @Override
+        public String call(String toolInput) {
+            invocations.incrementAndGet();
+            return delegate.call(toolInput);
         }
     }
 

@@ -67,7 +67,7 @@ docker compose ps          # postgres / minio / backend / frontend / weather-mcp
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 269 用例（需 Docker）+ weather-mcp 11 用例
+mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 11 用例
 mvn -f backend/advisory-server/pom.xml test # 只跑后端主服务
 mvn -f backend/mcp-server/weather-mcp/pom.xml test   # 只跑天气 MCP，无需 Docker
 npm --prefix frontend run test       # 37 用例

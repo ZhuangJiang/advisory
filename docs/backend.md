@@ -476,6 +476,8 @@ ping      {}                             每 15s
 
 约束：
 
+- **模型没调用任何工具就不算工具作答**：有些模型（deepseek-r1）接受 `tools` 参数却从不调用，然后凭记忆
+  编一段天气。网关统计回调调用次数，为 0 即抛错，编排器回退到检索——编造的实时数据比「查不到」更糟。
 - 工具回答**没有引用**（`citations=[]`，步骤载荷 `{"citations":0,"tools":true}`），前端照旧渲染。
 - **步骤事件在工具返回后才发**：失败时事件流里不会留下半截 ANSWER。
 - 工具名保持服务端原名。Spring AI 的 `SyncMcpToolCallback` 会加 `JavaSDKMCPClient_` 前缀，这里用自写的
@@ -540,7 +542,7 @@ ping      {}                             每 15s
 
 ## 12. 测试
 
-`mvn -f backend/advisory-server/pom.xml test` → **269 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
+`mvn -f backend/advisory-server/pom.xml test` → **271 用例**，需要 Docker（Testcontainers 起 PG + MinIO）。
 （仓库根 `backend/pom.xml` 是聚合工程，`mvn -f backend/pom.xml test` 会把 `mcp-server` 下的 MCP 服务一起跑。）
 
 | 类型 | 位置 | 做法 |

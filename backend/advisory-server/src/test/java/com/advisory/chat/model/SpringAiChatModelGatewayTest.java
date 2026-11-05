@@ -138,7 +138,15 @@ class SpringAiChatModelGatewayTest {
         when(registry.available()).thenReturn(true);
         when(registry.toolCallbacks()).thenReturn(List.of(weatherTool()));
 
-        SpringAiChatModelGateway gateway = gatewayWith(answering(seen, "北京当前晴，12 ℃。"), registry);
+        // 模拟真实工具循环：模型先要求调用工具（这里直接执行回调），再给出最终答案
+        ChatModel callingModel = prompt -> {
+            seen.set(prompt);
+            ((ToolCallingChatOptions) prompt.getOptions()).getToolCallbacks()
+                    .forEach(callback -> callback.call("{\"city\":\"北京\"}"));
+            return new ChatResponse(List.of(new Generation(
+                    new AssistantMessage("北京当前晴，12 ℃。"))));
+        };
+        SpringAiChatModelGateway gateway = gatewayWith(callingModel, registry);
 
         String answer = gateway.chatWithTools(7L, null, "sys", "北京今天天气怎么样？");
 
@@ -152,6 +160,26 @@ class SpringAiChatModelGatewayTest {
                 .toList();
         assertEquals(List.of("get_current_weather"), toolNames);
         assertTrue(seen.get().getInstructions().get(1).getText().contains("北京今天天气怎么样"));
+    }
+
+    /**
+     * 有工具但模型一次都没调用：必须当成失败，让编排器回退，而不是把凭记忆编的天气当答案。
+     * deepseek-r1 就是这种模型——它接受 tools 参数却从不调用。
+     */
+    @Test
+    void answerProducedWithoutCallingAnyToolIsRejected() {
+        McpToolRegistry registry = mock(McpToolRegistry.class);
+        when(registry.available()).thenReturn(true);
+        when(registry.toolCallbacks()).thenReturn(List.of(weatherTool()));
+
+        SpringAiChatModelGateway gateway = gatewayWith(
+                answering(new AtomicReference<>(), "北京今天晴，25 ℃。"), registry);
+
+        AppException failure = assertThrows(AppException.class,
+                () -> gateway.chatWithTools(7L, null, "sys", "北京天气"));
+
+        assertEquals(ErrorCode.INTERNAL_ERROR, failure.getCode());
+        assertTrue(failure.getMessage().contains("没有调用任何工具"));
     }
 
     /** 没有工具时退回普通作答，编排器不需要再判一次空。 */
