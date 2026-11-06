@@ -61,10 +61,14 @@ app:
     # 显存紧张时调小，换用大窗口模型时调大；不配则用 8192。
     context-window-tokens: ${CHAT_CONTEXT_WINDOW_TOKENS:8192}
   mcp:
-    # 外部 MCP 工具服务（weather-mcp）。连接在后台线程完成并定期重试：MCP 没起来、
-    # 正在重启都不会影响主服务启动与普通问答，只是那段时间天气问题会走知识库检索。
+    # 外部 MCP 工具服务清单。连接在后台线程完成并定期重试：某个 MCP 没起来、正在重启，
+    # 都不影响主服务启动与普通问答，只是那段时间它提供的工具不可用。
+    # 加一个 MCP 服务 = 加一条 servers；name 用于日志与工具重名时的前缀。
     enabled: ${MCP_ENABLED:true}
-    sse-url: ${WEATHER_MCP_URL:http://localhost:21001/sse}
-    # 单次 MCP 请求超时。要明显小于编排器单步 60 秒预算，工具卡住时才来得及降级。
     request-timeout: ${MCP_REQUEST_TIMEOUT:20s}
     retry-interval: ${MCP_RETRY_INTERVAL:30s}
+    servers:
+      - name: weather
+        sse-url: ${WEATHER_MCP_URL:http://localhost:21001/sse}
+      - name: news
+        sse-url: ${NEWS_MCP_URL:http://localhost:21002/sse}

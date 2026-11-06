@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+    <channel>
+        <title>测试新闻源</title>
+        <link>https://example.com</link>
+        <description>仅用于解析测试</description>
+        <item>
+            <title><![CDATA[新能源电池回收技术取得突破]]></title>
+            <link>https://example.com/a</link>
+            <pubDate>Thu, 06 Nov 2026 04:00:00 GMT</pubDate>
+            <description><![CDATA[<p>多家企业启动<b>中试线</b>&nbsp;验证</p>]]></description>
+        </item>
+        <item>
+            <title>   </title>
+            <link>https://example.com/skip</link>
+        </item>
+        <item>
+            <title>没有发布时间的新闻</title>
+            <link>https://example.com/b</link>
+        </item>
+    </channel>
+</rss>

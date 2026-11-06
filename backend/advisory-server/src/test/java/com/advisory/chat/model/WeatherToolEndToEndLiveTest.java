@@ -39,8 +39,8 @@ class WeatherToolEndToEndLiveTest {
         String ollamaUrl = System.getenv("OLLAMA_E2E_URL");
         String modelName = System.getenv().getOrDefault("OLLAMA_E2E_MODEL", "qwen2.5:7b");
 
-        McpToolRegistry registry = new McpToolRegistry(
-                new McpProperties(true, weatherUrl, Duration.ofSeconds(20), Duration.ofSeconds(5)));
+        McpToolRegistry registry = new McpToolRegistry(McpProperties.single("weather",
+                weatherUrl, Duration.ofSeconds(20), Duration.ofSeconds(5)));
         registry.start();
         try {
             long deadline = System.currentTimeMillis() + 20_000;

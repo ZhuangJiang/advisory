@@ -23,7 +23,7 @@ class McpToolRegistryLiveTest {
 
     @Test
     void listsWeatherToolsFromRealServer() throws InterruptedException {
-        McpToolRegistry registry = new McpToolRegistry(new McpProperties(true,
+        McpToolRegistry registry = new McpToolRegistry(McpProperties.single("weather",
                 System.getenv("WEATHER_MCP_URL"), Duration.ofSeconds(10), Duration.ofSeconds(5)));
         try {
             registry.start();

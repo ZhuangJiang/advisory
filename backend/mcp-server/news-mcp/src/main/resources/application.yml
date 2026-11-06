@@ -1,0 +1,57 @@
+server:
+  # 端口约定：MCP 服务 21001–21999。weather-mcp 占 21001，news-mcp 占 21002。
+  port: ${SERVER_PORT:21002}
+
+spring:
+  application:
+    name: news-mcp
+  ai:
+    mcp:
+      server:
+        # 客户端先 GET /sse 建流，再向 /mcp/message 提交请求；改名要同步改客户端配置。
+        name: news-mcp
+        version: 0.0.1
+        type: SYNC
+        sse-message-endpoint: /mcp/message
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+app:
+  news:
+    # rss = 真实抓取（需公网）；stub = 固定假数据，供离线开发与测试
+    provider: ${NEWS_PROVIDER:rss}
+    timeout: ${NEWS_TIMEOUT:5s}
+    cache-ttl: ${NEWS_CACHE_TTL:5m}
+    # 加源/删源只改这里。选源标准：能稳定返回 XML、覆盖最近 24 小时。
+    # 已知不可用（别再试）：36kr /feed 与 cnBeta 返回反爬 HTML，BBC 中文在国内不可达，
+    # GDELT 对国内出口 IP 长期 429/超时。
+    feeds:
+      - name: 中新网
+        url: https://www.chinanews.com.cn/rss/scroll-news.xml
+        category: 综合
+      - name: 新浪要闻
+        url: https://rss.sina.com.cn/news/marquee/ddt.xml
+        category: 综合
+      - name: 新浪财经
+        url: https://rss.sina.com.cn/roll/finance/hot_roll.xml
+        category: 财经
+      - name: IT之家
+        url: https://www.ithome.com/rss/
+        category: 科技
+      - name: 爱范儿
+        url: https://www.ifanr.com/feed
+        category: 科技
+      - name: 少数派
+        url: https://www.sspai.com/feed
+        category: 科技
+
+logging:
+  level:
+    com.advisory.mcp.news: INFO

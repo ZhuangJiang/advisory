@@ -31,6 +31,7 @@ backend/                        Maven 聚合工程（packaging=pom）：锁 JDK 
     src/main/resources/db/migration/   Flyway；新增迁移从 V6 起，禁止改已发布的 V1–V5
   mcp-server/                   MCP 服务族聚合（packaging=pom）：一个子模块 = 一个独立进程
     weather-mcp/                天气 MCP（Spring AI MCP Server，SSE :21001，Open-Meteo，无数据库）
+    news-mcp/                   新闻检索 MCP（SSE :21002，RSS 聚合，无数据库；源清单在 application.yml）
 frontend/           Vue 3 SPA（Vite；/api 代理到 20001，生产由 nginx 反代）
   src/api/          唯一 HTTP 出口（client.ts + session.ts + sse.ts）
   src/stores/       Pinia：auth、chat
@@ -46,7 +47,7 @@ docs/               backend.md、frontend.md、acceptance.md、spec 与实施计
 ```powershell
 # 后端：需要 JDK 21。本机默认 JAVA_HOME 指向 JDK 8，必须先覆盖。
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 12 用例
+mvn -f backend/pom.xml test                       # 聚合构建：advisory-server 276 用例（需 Docker）+ weather-mcp 12 + news-mcp 33 用例
 mvn -f backend/advisory-server/pom.xml test       # 只跑主服务，需要 Docker（Testcontainers 起 PG/MinIO）
 mvn -f backend/mcp-server/weather-mcp/pom.xml test # 只跑天气 MCP，无需 Docker
 
@@ -139,7 +140,11 @@ powershell -File scripts/smoke.ps1
 - **一个子模块 = 一个独立进程**：不共享代码、不共享数据库、不依赖 `advisory-server`。新增 MCP 服务只在 `backend/mcp-server/pom.xml` 加一个 `<module>`，父 POM 已统一 JDK 与 Spring AI BOM。
 - **传输只用 SSE（HTTP）**：Spring AI 1.0.x 的 MCP Server 不支持 streamable HTTP（要 1.1+）。stdio 只能由客户端拉起同机子进程，不适合常驻容器/远程客户端。
 - **工具永不抛异常**：把「城市不存在」「上游超时」翻译成可读文本直接返回。异常进了模型上下文只会打断它组织回答，用户还看到一段堆栈式噪音。
-- **数据源必须可切换**：`app.weather.provider = open-meteo | stub`。stub 让测试与离线开发不碰公网；配置写错在**启动时**就抛明确错误，而不是等到调用工具时才 NoSuchBean。
+- **数据源必须可切换**：`app.weather.provider = open-meteo | stub`、`app.news.provider = rss | stub`。stub 让测试与离线开发不碰公网；配置写错在**启动时**就抛明确错误，而不是等到调用工具时才 NoSuchBean。
+- **新闻源只加「真的能解析」的**：36kr `/feed` 与 cnBeta 返回反爬 HTML，BBC 中文在国内不可达，
+  **GDELT 对国内出口 IP 长期 429/超时**（选型时实测过）。加源前先 `curl | head -c 60` 看是不是 XML。
+- **新闻抓取要并行 + 按源缓存 + 失败保旧**：6 个源串行 × 5s 超时能撞上工具超时；单源失败不能拖垮整次查询，
+  有旧数据就继续用（差几分钟不算错，整段回答消失才是）。
 - **协议测要真 SSE**：用 MCP SDK 的 `HttpClientSseClientTransport` 连随机端口跑 `initialize → tools/list → tools/call`。MockMvc 覆盖不到 SSE 握手与事件帧。
 - 端点固定 `/sse` + `/mcp/message`；改名要同步 README 的客户端配置示例。
 
@@ -149,16 +154,17 @@ powershell -File scripts/smoke.ps1
   MCP 是独立进程，它没起来不能拦住主服务启动，更不能让提问失败。
 - **工具是短路，不是主链路**：`gateway.hasLiveTools()` + `ToolRouting.wantsLiveData(question)` 同时成立才走；
   超时/失败只 WARN，继续原四阶段流水线。**不要**把工具塞进 ANSWER 的普通作答里——那会破坏「无依据不作答」。
-- **路由词表必须保守**：只收语义明确的词（气温/下雨/预报），不收「温度/湿度」——碳核算与设备文档里同样常见，
-  误判等于拿天气答案盖掉业务问题。
-- **工具名不加前缀**：自写 `McpToolCallback` 代替 Spring AI 的 `SyncMcpToolCallback`（后者会加
-  `JavaSDKMCPClient_` 前缀，进模型上下文与推理摘要）。接入第二个 MCP 服务出现重名时，再按服务别名加。
+- **路由词表必须保守**：只收语义明确的词（气温/下雨/头条/快讯），不收「温度/湿度/最新/消息」——
+  碳核算、设备文档与业务问答里同样常见，误判等于拿实时答案盖掉业务问题。
+- **工具名默认保持服务端原名**：自写 `McpToolCallback` 代替 Spring AI 的 `SyncMcpToolCallback`（后者会加
+  `JavaSDKMCPClient_` 前缀，进模型上下文与推理摘要）。**多服务重名才加前缀**：`aggregate()` 检测到
+  同名工具属于两个服务时，双方都改成 `服务名_工具名` 并 WARN——只改一方仍然分不清。
 - **只有工具执行失败才 `invalidate()`**：模型侧故障（401、模型不支持 function calling）与 MCP 健康无关，
   拿它去重连只会让每个问题都多一次握手。
 - **必须校验「工具真的被调用了」**：deepseek-r1 这类模型接受 `tools` 参数却从不调用，会凭记忆编天气。
   网关统计回调次数，为 0 就抛错让编排器回退——编造的实时数据比「查不到」更糟。
 - 联调用例 `McpToolRegistryLiveTest` 靠 `WEATHER_MCP_URL` 环境变量开启，默认跳过；它真的会打一次
-  `tools/call`，不是只握手。
+  `tools/call`，不是只握手。news-mcp 侧的同名用例 `NewsLiveTest` 靠 `NEWS_LIVE_TEST=true` 开启，真的抓 RSS。
 - **模型必须支持 function calling**：`qwen2.5:7b` / `llama3.1:8b` 可用，`deepseek-r1` 不行（静默不调用）。
   换 Agent 的 chat 模型后，先确认 Ollama 的 `/api/chat` 响应里有 `message.tool_calls`。
 - **容器访问不到 WSL 里的 Ollama**：Docker Desktop 对 WSL 虚拟网卡没有路由，`172.25.x.x:11434` 会
@@ -171,7 +177,7 @@ powershell -File scripts/smoke.ps1
 
 改完代码按影响面选，**不要只看编译通过**：
 
-- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 271 用例 + weather-mcp 12 用例，必须全绿）
+- 后端逻辑：`mvn -f backend/pom.xml test`（聚合构建，advisory-server 276 用例 + weather-mcp 12 + news-mcp 33 用例，必须全绿）
 - 只改 MCP 服务：`mvn -f backend/mcp-server/weather-mcp/pom.xml test`（无需 Docker，秒级）
 - 前端逻辑：`npm --prefix frontend run test` 与 `npm --prefix frontend run build`
 - 动了安全链 / SSE / 预签名 / 健康检查：必须 `docker compose up -d --build` 后在真容器里验一遍

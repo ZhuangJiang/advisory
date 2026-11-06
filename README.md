@@ -67,7 +67,7 @@ docker compose ps          # postgres / minio / backend / frontend / weather-mcp
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 271 用例（需 Docker）+ weather-mcp 12 用例
+mvn -f backend/pom.xml test                 # 聚合构建：advisory-server 276 用例（需 Docker）+ weather-mcp 12 + news-mcp 33 用例
 mvn -f backend/advisory-server/pom.xml test # 只跑后端主服务
 mvn -f backend/mcp-server/weather-mcp/pom.xml test   # 只跑天气 MCP，无需 Docker
 npm --prefix frontend run test       # 37 用例
@@ -103,6 +103,7 @@ backend/                       Maven 聚合工程（packaging=pom，锁版本与
   advisory-server/             主后端（原 backend，artifact: advisory-server）
   mcp-server/                  MCP 服务族聚合（packaging=pom）
     weather-mcp/               天气 MCP 服务（Spring AI MCP Server，SSE，:21001）
+    news-mcp/                  新闻检索 MCP 服务（RSS 聚合，SSE，:21002）
 frontend/         Vue 3 SPA（Vite；生产镜像由 nginx 托管）
 deploy/           nginx.conf、init-bucket.sh
 scripts/          smoke.ps1（端到端冒烟）、fake-model-server.mjs（本地模型桩）
@@ -114,17 +115,31 @@ docs/             backend.md、frontend.md（说明文档）；acceptance.md（�
 `backend/mcp-server` 是一个可扩展的 MCP 服务族：每个子模块 = 一个独立部署的 Spring Boot 进程，
 与 `advisory-server` 无代码与数据依赖，新增服务只需在 `backend/mcp-server/pom.xml` 里加一个 `<module>`。
 
-当前提供 `weather-mcp`（天气查询，数据源 Open-Meteo，无需 API Key）：
+当前提供两个服务，都是 Spring AI MCP Server + SSE 传输、无数据库、数据源可切到 `stub` 离线模式：
+
+| 服务 | 端口 | 工具 | 数据源 |
+|---|---|---|---|
+| `weather-mcp` | 21001 | `get_current_weather`、`get_weather_forecast` | Open-Meteo（免费、无 Key） |
+| `news-mcp` | 21002 | `search_news`、`get_headlines` | RSS 聚合（中新网、新浪、IT之家等 6 源，免费、无 Key） |
+
+分别启动：
 
 ```powershell
 $env:JAVA_HOME='D:\Program Files\Java\jdk-21.0.9+10'
-mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
+mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run    # 21001
+mvn -f backend/mcp-server/news-mcp/pom.xml spring-boot:run       # 21002
 ```
 
-- MCP 端点：`http://localhost:21001/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
-- 工具：`get_current_weather(city)`、`get_weather_forecast(city, days)`
-- 离线开发：`WEATHER_PROVIDER=stub`，返回固定假数据，不访问公网
-- **对话里怎么用**：`advisory-server` 会在后台连上这个端点（`WEATHER_MCP_URL`）。
+- MCP 端点：`http://localhost:21001/sse` / `http://localhost:21002/sse`（消息端点 `/mcp/message`），健康检查 `/actuator/health`
+- 新闻源清单在 `news-mcp/src/main/resources/application.yml` 的 `app.news.feeds`：加源删源只改配置；
+  已知不可用（别再试）：36kr `/feed` 与 cnBeta 返回反爬 HTML，BBC 中文在国内不可达，
+  **GDELT 对国内出口 IP 长期 429/超时**（所以没有选它）
+- 离线开发：`WEATHER_PROVIDER=stub` / `NEWS_PROVIDER=stub`，返回固定假数据，不访问公网
+- **新闻能力的边界**：RSS 只能拿到各源最近的几十条，`search_news` 是「在这些最近新闻里筛」而非全网检索；
+  匹配范围是标题 + 摘要 + 正文（标题常不含关键词，正文里有）。免 Key 的全网新闻检索 API 已基本绝迹
+  （Bing/Baidu 的 RSS 都已停用），要真正的全网检索需接入带 Key 的服务并实现第三个 `NewsProvider`。
+- **对话里怎么用**：`advisory-server` 会在后台分别连上两个端点（`WEATHER_MCP_URL` / `NEWS_MCP_URL`），
+  工具清单里同时有天气与新闻，编排器按问题内容交给模型选择。
   问「北京今天天气怎么样」时编排器直接调工具作答、不检索知识库；MCP 没起来时自动回退到原来的检索流程，
   不会让会话失败。`MCP_ENABLED=false` 可整体关掉。
 - **能调起来的前提**（缺一不可，两点都容易踩）：
@@ -136,10 +151,10 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
      前提是 hosts 文件里 Docker Desktop 写入的 `host.docker.internal` 指向 `127.0.0.1`
      （若指向旧 IP，请修正；备份在调整时已留）。
 - 端口约定：**后端服务 20001–20999**（`advisory-server` 20001，新增后端服务从 20002 顺延），
-  **MCP 服务 21001–21999**（`weather-mcp` 21001，新增 MCP 服务从 21002 顺延）；基础设施保留默认
+  **MCP 服务 21001–21999**（`weather-mcp` 21001、`news-mcp` 21002，新增从 21003 顺延）；基础设施保留默认
   （PostgreSQL 5432、MinIO 9000/9001、前端 80 / dev 5173）。
-- 端口冲突：本地 IDE/`mvn` 已占 21001 时，容器用 `WEATHER_MCP_PORT=21002 docker compose up -d weather-mcp`；
-  容器之间仍走 `http://weather-mcp:21001`。后端同理用 `BACKEND_PORT`。
+- 端口冲突：本地 IDE/`mvn` 已占 21001 / 21002 时，容器用 `WEATHER_MCP_PORT` / `NEWS_MCP_PORT` 换个宿主端口；
+  容器之间仍走容器内端口（`http://weather-mcp:21001`、`http://news-mcp:21002`）。后端同理用 `BACKEND_PORT`。
 - 客户端接入（以 Claude Desktop 为例）：
 
 ```json
@@ -147,6 +162,9 @@ mvn -f backend/mcp-server/weather-mcp/pom.xml spring-boot:run
   "mcpServers": {
     "weather": {
       "url": "http://localhost:21001/sse"
+    },
+    "news": {
+      "url": "http://localhost:21002/sse"
     }
   }
 }

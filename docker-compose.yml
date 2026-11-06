@@ -79,9 +79,10 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-dev-only-32-byte-key-change-me!!}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
-      # 天气 MCP 服务（独立容器）。刻意不加 depends_on：连不上时天气问题回退到知识库检索，
-      # 不能让 MCP 的启停决定问答主链路能否启动。
+      # MCP 工具服务（各自独立容器）。刻意不加 depends_on：连不上时对应问题回退到知识库检索，
+      # 不能让 MCP 的启停决定问答主链路能否启动。新增 MCP 服务就在这里加一条。
       WEATHER_MCP_URL: http://weather-mcp:21001/sse
+      NEWS_MCP_URL: http://news-mcp:21002/sse
     ports:
       # 端口约定：后端服务 20001–20999。容器内固定 20001，宿主端可覆盖（BACKEND_PORT）。
       - "${BACKEND_PORT:-20001}:20001"
@@ -126,6 +127,24 @@ services:
       - "${WEATHER_MCP_PORT:-21001}:21001"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:21001/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # 新闻检索 MCP 服务：抓取配置内的 RSS 源（无 Key、无配额），按 5 分钟缓存。
+  # 端口 21002（MCP 号段顺延），同样与 backend 无依赖关系。
+  news-mcp:
+    build:
+      context: .
+      dockerfile: backend/mcp-server/news-mcp/Dockerfile
+    container_name: advisory-news-mcp
+    environment:
+      NEWS_PROVIDER: ${NEWS_PROVIDER:-rss}
+    ports:
+      - "${NEWS_MCP_PORT:-21002}:21002"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:21002/actuator/health | grep -q UP"]
       interval: 10s
       timeout: 5s
       retries: 12

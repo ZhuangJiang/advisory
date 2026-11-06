@@ -23,5 +23,6 @@
 
     <modules>
         <module>weather-mcp</module>
+        <module>news-mcp</module>
     </modules>
 </project>

@@ -21,6 +21,16 @@ class ToolRoutingTest {
     }
 
     @Test
+    void recognisesNewsQuestions() {
+        assertTrue(ToolRouting.wantsLiveData("最近有什么新能源相关的新闻？"));
+        assertTrue(ToolRouting.wantsLiveData("今天科技头条有哪些"));
+        assertTrue(ToolRouting.wantsLiveData("碳交易的最新快讯"));
+        assertTrue(ToolRouting.wantsLiveData("给我看看今天的要闻"));
+        assertTrue(ToolRouting.wantsLiveData("latest news about carbon market"));
+        assertTrue(ToolRouting.wantsLiveData("tech headlines today"));
+    }
+
+    @Test
     void leavesBusinessQuestionsAlone() {
         assertFalse(ToolRouting.wantsLiveData("碳排放核算边界怎么划定？"));
         assertFalse(ToolRouting.wantsLiveData("核查流程有哪些步骤"));
@@ -35,6 +45,10 @@ class ToolRoutingTest {
     void ambiguousTermsAreDeliberatelyExcluded() {
         assertFalse(ToolRouting.wantsLiveData("炉膛温度控制在多少"));
         assertFalse(ToolRouting.wantsLiveData("车间湿度要求是多少"));
+        // 新闻词表同理：「最新」「消息」「动态」在业务问答里太常见
+        assertFalse(ToolRouting.wantsLiveData("最新的碳排放核算标准是什么"));
+        assertFalse(ToolRouting.wantsLiveData("这个政策有什么新消息"));
+        assertFalse(ToolRouting.wantsLiveData("行业动态有哪些值得关注"));
     }
 
     @Test
