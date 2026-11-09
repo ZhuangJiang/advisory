@@ -5,7 +5,13 @@
 > github：https://github.com/ZhuangJiang/advisory.git
 > 最后核对：2026-11-09
 >
-> **当前状态：✅ 已完成首推。** 两侧均指向 `f7ff891`，59 条提交，历史完整，无落后。后续只需按 §4 增量同步。
+> **当前状态（2026-11-09 11:05）**
+>
+> - gitee：`master` + `feat/advisory-platform-mvp` 两个分支，最新 `f378d45`（60 提交）✅
+> - github：仅 `feat/advisory-platform-mvp`，最新 `f378d45`；**`master` 待补推** ⏳
+>   原因：HTTPS 直连被墙，本地代理客户端（`127.0.0.1:62665`）已退出，`CONNECT` 返回 502。
+> - 补推命令（网络恢复或改用 SSH 后一条搞定）：`git push github --all`
+> - 后续增量同步按 §4
 
 ## 0. 一句话方案
 
@@ -77,14 +83,16 @@ git push github feat/advisory-platform-mvp
 
 ### 3.3 是否要推 `master`
 
-`master` 只有 1 条初始提交，且是 `feat` 的祖先，其内容已在 github 的 `feat` 历史里。**可以不推**，好处是两边分支集合完全一致（都只有 `feat/advisory-platform-mvp`）。
+`master` 只有 1 条初始提交，且是 `feat` 的祖先，其内容已在 github 的 `feat` 历史里，**技术上可以不推**。
 
-若确实想保留 `master` 指针，必须两边一起补，否则平台间分支列表会不对称：
+**本仓库的实际决定：保留 `master`（两个平台对称）**。已执行：
 
 ```bash
-git push origin master      # 先补齐 gitee
-git push github master      # 再同步 github
+git push origin master      # gitee：已补上
+git push github master      # github：待网络恢复后补，或直接 git push github --all
 ```
+
+> 规则只有一条：两边要么都有 `master`，要么都没有。单边存在会让分支列表不对称，以后 `--all` 同步时容易漏。
 
 ### 3.4 校验首推结果
 
@@ -247,7 +255,44 @@ git pull github feat/advisory-platform-mvp --allow-unrelated-histories
 
 ### 7.5 推送卡住 / 超时
 
-国内访问 github 常超时。配置代理（按自己本地端口改）：
+先别急着换命令，三条命令就能定性问题在哪一层：
+
+```bash
+curl -m 15 --noproxy '*' -o /dev/null -w "%{http_code}\n" https://github.com   # 直连
+curl -m 5  --proxy http://127.0.0.1:<你的端口> -o /dev/null -w "%{http_code}\n" https://github.com
+ssh -o ConnectTimeout=10 -T git@github.com 2>&1 | head -1
+```
+
+| 结果 | 含义 |
+|---|---|
+| 直连 `000` / 超时 | 443 被墙，直连这条路不通 |
+| 代理返回 `502` / `000` | 代理进程已退出或节点挂了（`netstat` 里该端口只有 `TIME_WAIT`、没有 `LISTENING` 就是这种） |
+| SSH 回 `Permission denied (publickey)` | **链路是通的**，只缺密钥——这不是网络问题 |
+
+> `Permission denied (publickey)` 是好消息，说明 TCP 握手成功。真正不通表现为 `Connection timed out`。
+
+**HTTPS 走不通时改 SSH**（本机 2026-11-09 实测：HTTPS 直连超时，而 `github.com:22` 与 `ssh.github.com:443` 均连通）：
+
+```bash
+ssh-keygen -t ed25519 -C "zhuangjianglong@klcgis.com.cn" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub          # 整行粘到 https://github.com/settings/ssh/new
+ssh -T git@github.com              # 期望：Hi ZhuangJiang! You've successfully authenticated
+git remote set-url github git@github.com:ZhuangJiang/advisory.git
+git push github --all
+```
+
+若 22 端口也不通，让 SSH 走 443——`~/.ssh/config`：
+
+```
+Host github.com
+  HostName ssh.github.com
+  Port 443
+  User git
+```
+
+> 本机已生成 `~/.ssh/id_ed25519`（无密码），公钥尚待添加到 GitHub；添加后执行上面第 3 步即可验证。
+
+如果只是想让 HTTPS 恢复，配置代理（按自己本地端口改）：
 
 ```bash
 git config --global http.https://github.com.proxy http://127.0.0.1:7890
@@ -256,14 +301,9 @@ git config --global https.https://github.com.proxy http://127.0.0.1:7890
 git config --global --unset http.https://github.com.proxy
 ```
 
-或改用 SSH over 443：`~/.ssh/config` 里
+> 注意：若 shell 里已存在 `HTTPS_PROXY` 环境变量，即使 git 没配 proxy 也会走它；代理进程一退出，git 就会报 `CONNECT tunnel failed, response 502`。排查时用 `env | grep -i proxy` 一并确认。
 
-```
-Host github.com
-  HostName ssh.github.com
-  Port 443
-  User git
-```
+**另一个可选项：SSH over 443** 的 config 同上，把 `Port 443` 保留即可。
 
 ### 7.6 提交在 GitHub 上不显示作者头像
 
@@ -302,9 +342,10 @@ git diff --cached --stat    # 暂存区里有什么
 首推：
 
 - [ ] `git remote add github …`，`git remote -v` 确认两条 push 地址
-- [ ] `git push github feat/advisory-platform-mvp`
+- [ ] `git push github --all`（分支多时比逐个写名字稳）
 - [ ] `git rev-parse HEAD` 与 `git ls-remote github …` 的 hash 相同
-- [ ] GitHub 网页能看到 58 条提交、分支名正确、默认分支已设置
+- [ ] `git ls-remote --heads origin` 与 `git ls-remote --heads github` 的**分支列表一致**
+- [ ] GitHub 网页能看到 60 条提交、分支名正确、默认分支已设置
 
 日常每次提交后：
 
