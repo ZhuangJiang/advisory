@@ -5,13 +5,15 @@
 > github：https://github.com/ZhuangJiang/advisory.git
 > 最后核对：2026-11-09
 >
-> **当前状态（2026-11-09 11:05）**
+> **当前状态（2026-11-09 11:49）：✅ 全部分支已同步。**
 >
-> - gitee：`master` + `feat/advisory-platform-mvp` 两个分支，最新 `f378d45`（60 提交）✅
-> - github：仅 `feat/advisory-platform-mvp`，最新 `f378d45`；**`master` 待补推** ⏳
->   原因：HTTPS 直连被墙，本地代理客户端（`127.0.0.1:62665`）已退出，`CONNECT` 返回 502。
-> - 补推命令（网络恢复或改用 SSH 后一条搞定）：`git push github --all`
-> - 后续增量同步按 §4
+> | 分支 | 本地 | gitee | github |
+> |---|---|---|---|
+> | `feat/advisory-platform-mvp` | `127ee3a` | `127ee3a` | `127ee3a` |
+> | `master` | `2432ea2` | `2432ea2` | `2432ea2` |
+>
+> 60 条提交，历史完整，无落后。后续增量同步按 §4（`git sync`）。
+> 历史插曲：11:05 那次 github 推送曾因代理退出中断，11:49 代理恢复后 `git push github --all` 一次补齐，全过程未用 `--force`。
 
 ## 0. 一句话方案
 
@@ -85,11 +87,11 @@ git push github feat/advisory-platform-mvp
 
 `master` 只有 1 条初始提交，且是 `feat` 的祖先，其内容已在 github 的 `feat` 历史里，**技术上可以不推**。
 
-**本仓库的实际决定：保留 `master`（两个平台对称）**。已执行：
+**本仓库的实际决定：保留 `master`（两个平台对称）**，已执行完毕：
 
 ```bash
-git push origin master      # gitee：已补上
-git push github master      # github：待网络恢复后补，或直接 git push github --all
+git push origin master      # gitee：已补上（2432ea2）
+git push github master      # github：已补上（2432ea2）
 ```
 
 > 规则只有一条：两边要么都有 `master`，要么都没有。单边存在会让分支列表不对称，以后 `--all` 同步时容易漏。
